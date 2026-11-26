@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Play, Film, Tv, Settings, User, LogOut, Eye, EyeOff, ArrowLeft, Star, Clock, X, SkipForward,
   Lock, Unlock, Download, Upload, RefreshCw, Calendar, Copy, ExternalLink, ChevronLeft, ChevronRight,
-  RotateCcw, RotateCw, Maximize, PictureInPicture2, Search, Check,
+  RotateCcw, RotateCw, Maximize, PictureInPicture2, Search, Check, Trophy, LayoutGrid, Mic,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import Timeline, { FollowAlert, catchupItem, hasArchive } from './Timeline.jsx';
 import { processLive, loadLiveOpts, saveLiveOpts, countriesFound, groupCountries, ctyName, QUALITIES, qualOf, altsOf } from './channels.js';
 import HelpPanel from './help.jsx';
+import { SportView, MultiviewView, ScreenSaver, SpeedTest, CopySetup } from './extras.jsx';
 import Appearance from './Appearance.jsx';
 import { SERVER, BrandMark, AppUpdate } from './brand.jsx';
 
@@ -1574,11 +1575,16 @@ function App() {
           // Up to 300 channels either side (big lists are too large to pass to the app)
           const from = Math.max(0, idx - 300);
           const chans = list.slice(from, idx + 301).map((c, k) => ({
-            num: from + k + 1,
+            num: Number(c.num) || from + k + 1,
+            id: String(c.stream_id),
             name: c.name,
             url: buildStreamUrls(credentials, { ...c, type: 'live' })[0],
           }));
-          nat.playChannels(streamUrl, JSON.stringify(chans), idx - from);
+          if (typeof nat.playChannelsGuide === 'function') {
+            const epgBase = `${credentials.server}/player_api.php?username=${encodeURIComponent(credentials.username)}` +
+              `&password=${encodeURIComponent(credentials.password)}&action=get_short_epg&limit=4&stream_id=`;
+            nat.playChannelsGuide(streamUrl, JSON.stringify(chans), idx - from, epgBase);
+          } else nat.playChannels(streamUrl, JSON.stringify(chans), idx - from);
         } else if (typeof nat.playDirect === 'function') nat.playDirect(streamUrl);
         else nat.play(streamUrl);
         return;
@@ -2322,6 +2328,49 @@ function App() {
   }, []);
   const canUpdate = typeof window !== 'undefined' && window.PrimoNative && typeof window.PrimoNative.checkUpdate === 'function';
 
+  // ---------- Reminders (stored and fired by the app, a minute before the start) ----------
+  const nativeOK = typeof window !== 'undefined' && !!window.PrimoNative;
+  const readRem = () => {
+    try { return JSON.parse((window.PrimoNative && window.PrimoNative.reminders && window.PrimoNative.reminders()) || '{}'); }
+    catch (e) { return {}; }
+  };
+  const [rems, setRems] = useState(readRem);
+  const remId = (ch, start) => `${ch.stream_id}|${start}`;
+  const isReminded = (ch, start) => !!rems[remId(ch, start)];
+  const toggleRemind = (ch, p) => {
+    const n = window.PrimoNative;
+    if (!n || typeof n.remind !== 'function' || !credentials) return;
+    const id = remId(ch, p.start);
+    if (rems[id]) n.cancelRemind(id);
+    else {
+      const t = new Date(p.start).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      n.remind(id, String(p.start), `${p.title} is starting`, `${t} on ${ch.name}`, buildStreamUrls(credentials, { ...ch, type: 'live' })[0]);
+    }
+    setRems(readRem());
+  };
+
+  // ---------- Multiview list ----------
+  const [mvList, setMvList] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('primotv_multiview') || '[]'); } catch (e) { return []; }
+  });
+  const saveMv = (L) => {
+    setMvList(L);
+    try { localStorage.setItem('primotv_multiview', JSON.stringify(L)); } catch (e) {}
+  };
+  const toggleMv = (ch) => {
+    const has = mvList.some((c) => String(c.stream_id) === String(ch.stream_id));
+    if (has) saveMv(mvList.filter((c) => String(c.stream_id) !== String(ch.stream_id)));
+    else if (mvList.length < 4) saveMv([...mvList, { stream_id: ch.stream_id, name: ch.name, num: ch.num }]);
+  };
+
+  // ---------- Voice search ----------
+  const [hasVoice] = useState(() => {
+    try { return !!(window.PrimoNative && window.PrimoNative.hasVoice && window.PrimoNative.hasVoice()); } catch (e) { return false; }
+  });
+  const startVoice = () => {
+    try { if (window.PrimoNative && window.PrimoNative.voiceSearch) window.PrimoNative.voiceSearch(); } catch (e) {}
+  };
+
   // ---------- Open on the last channel, and number keys jump to a channel (TV) ----------
   const playLiveRef = useRef(null);
   const autoPlayedRef = useRef(false);
@@ -2334,6 +2383,46 @@ function App() {
     playLiveRef.current(ch, liveChannels);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentials, liveChannels.length, recents.length]);
+
+  useEffect(() => {
+    window.__ptVoice = (t) => {
+      if (!t) return;
+      setActiveView('search');
+      setGq(String(t));
+    };
+    window.__ptVoiceKey = () => {
+      setActiveView('search');
+      startVoice();
+    };
+    window.__ptOpenChannel = (id) => {
+      const ch = liveRawRef.current.find((c) => String(c.stream_id) === String(id));
+      if (ch && playLiveRef.current) playLiveRef.current(ch, liveRawRef.current);
+      else window.__ptPendingOpen = id;
+    };
+    return () => { window.__ptVoice = null; window.__ptVoiceKey = null; window.__ptOpenChannel = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const liveRawRef = useRef([]);
+  liveRawRef.current = liveRaw;
+  useEffect(() => {
+    const id = window.__ptPendingOpen;
+    if (!id || !liveRaw.length || !playLiveRef.current) return;
+    window.__ptPendingOpen = null;
+    const ch = liveRaw.find((c) => String(c.stream_id) === String(id));
+    if (ch) playLiveRef.current(ch, liveChannels);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveRaw.length]);
+  // Google TV home screen row of favourite channels
+  useEffect(() => {
+    const n = window.PrimoNative;
+    if (!n || typeof n.setHomeRow !== 'function' || !credentials) return;
+    try { if (n.homeRowSupported && !n.homeRowSupported()) return; } catch (e) { return; }
+    const t = setTimeout(() => {
+      n.setHomeRow(JSON.stringify((favs.live || []).slice(0, 20).map((c) => ({ id: String(c.stream_id), name: c.name, logo: c.stream_icon || '' }))));
+    }, 3000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credentials, favs.live]);
 
   const jumpRef = useRef(null);
   jumpRef.current = (n) => {
@@ -2857,6 +2946,21 @@ function App() {
                 <EyeOff size={13} style={{ verticalAlign: '-2px', marginRight: 6 }} />
                 Hide this channel
               </button>
+              {nativeOK && (
+                <button
+                  type="button"
+                  onClick={() => toggleMv(sel)}
+                  style={{
+                    marginTop: 8, marginLeft: 8, padding: '6px 12px', background: 'none', color: 'var(--pt-mut, #aab)',
+                    border: '1px solid var(--pt-line, #333a44)', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  <LayoutGrid size={13} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                  {mvList.some((c) => String(c.stream_id) === String(sel.stream_id))
+                    ? 'Remove from Multiview'
+                    : `Add to Multiview (${mvList.length}/4)`}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -2908,6 +3012,11 @@ function App() {
                 <div style={{ fontSize: 16, fontWeight: 'bold', margin: '2px 0' }}>
                   {sel.p ? sel.p.title : 'No programme information'}
                 </div>
+                {sel.p && sel.p.start > Date.now() && nativeOK && (
+                  <div style={{ fontSize: 12, color: 'var(--pt-acc, #55b2f2)', margin: '2px 0' }}>
+                    {isReminded(sel.ch, sel.p.start) ? '🔔 Reminder set · press OK to cancel it' : '🔔 Press OK to be reminded when this starts'}
+                  </div>
+                )}
                 {sel.p && sel.p.end <= Date.now() && (
                   <div style={{ fontSize: 12, color: 'var(--pt-acc, #55b2f2)', margin: '2px 0' }}>
                     {hasArchive(sel.ch, sel.p, Date.now()) ? '↺ Catch up: press OK to watch this from the start' : 'Already shown · catch up not available on this channel'}
@@ -3023,7 +3132,9 @@ function App() {
                         onClick={() =>
                           p.end <= Date.now() && hasArchive(ch, p, Date.now())
                             ? playCatchup(catchupItem(credentials, ch, p))
-                            : playLive(ch, list)
+                            : p.start > Date.now() && nativeOK
+                              ? toggleRemind(ch, p)
+                              : playLive(ch, list)
                         }
                         style={{
                           position: 'absolute', left: `calc(${left}% + 1px)`, width: `calc(${width}% - 2px)`,
@@ -3032,7 +3143,7 @@ function App() {
                         }}
                       >
                         <div style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {p.title}
+                          {isReminded(ch, p.start) ? '🔔 ' : ''}{p.title}
                         </div>
                         <div style={{ fontSize: 10, color: 'var(--pt-mut, #889)', whiteSpace: 'nowrap' }}>{tvTime(p.start)}</div>
                       </div>
@@ -3712,12 +3823,14 @@ function App() {
         <nav style={{ ...styles.mainMenu, ...(narrow ? styles.mainMenuNarrow : {}) }}>
           {[
             { name: 'Live TV', icon: Tv, view: 'live' },
+            { name: 'Sport', icon: Trophy, view: 'sport' },
             { name: 'Movies', icon: Film, view: 'movies' },
             { name: 'Series', icon: Play, view: 'series' },
             { name: 'Continue', icon: Clock, view: 'continue' },
             { name: 'Favourites', icon: Star, view: 'favourites' },
             { name: 'Timeline', icon: Calendar, view: 'timeline' },
             { name: 'Guide', icon: Calendar, view: 'guide' },
+            ...(nativeOK ? [{ name: 'Multiview', icon: LayoutGrid, view: 'multiview' }] : []),
             { name: 'Settings', icon: Settings, view: 'settings' },
           ].map((item) => {
             const Icon = item.icon;
@@ -4016,6 +4129,11 @@ function App() {
                   value={gq}
                   onChange={(e) => setGq(e.target.value)}
                 />
+                {hasVoice && (
+                  <button style={{ ...styles.actionButton, marginLeft: 8 }} onClick={startVoice} title="Voice search" aria-label="Voice search">
+                    <Mic size={18} style={{ verticalAlign: '-3px' }} /> Speak
+                  </button>
+                )}
               </div>
               {gq.trim().length < 2 ? (
                 <p style={{ color: 'var(--pt-mut, #aaa)' }}>
@@ -4273,6 +4391,32 @@ function App() {
           )}
 
           {/* TIMELINE */}
+          {activeView === 'sport' && credentials && (
+            <SportView
+              chans={liveChannels}
+              cats={liveCats}
+              getEpg={(id) => apiCall(credentials.server, credentials.username, credentials.password, 'get_short_epg', { stream_id: id, limit: 30 })}
+              onPlay={(ch) => playLive(ch, liveChannels)}
+              canCatch={(ch, e) => hasArchive(ch, { start: e.s, end: e.e }, Date.now())}
+              onCatchup={(ch, e) => playCatchup(catchupItem(credentials, ch, { start: e.s, end: e.e, title: e.title }))}
+              isReminded={isReminded}
+              onRemind={toggleRemind}
+            />
+          )}
+
+          {activeView === 'multiview' && credentials && (
+            <MultiviewView
+              list={mvList}
+              onRemove={toggleMv}
+              onClear={() => saveMv([])}
+              onStart={() => {
+                try {
+                  window.PrimoNative.multiview(JSON.stringify(mvList.map((c) => ({ name: c.name, url: buildStreamUrls(credentials, { ...c, type: 'live' })[0] }))));
+                } catch (e) {}
+              }}
+            />
+          )}
+
           {activeView === 'timeline' && credentials && (
             <Timeline
               api={(action, extra) =>
@@ -4797,10 +4941,15 @@ function App() {
               </>)}
 
               {setTab === 'help' && (
+                <SpeedTest sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
+              )}
+              {setTab === 'help' && (
                 <HelpPanel sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
               )}
 
               {setTab === 'account' && (<>
+              <CopySetup credentials={credentials} sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} inputStyle={styles.input} />
+
               {/* BACKUP */}
               <div style={styles.settingsSection}>
                 <h3 style={styles.settingsTitle}>Backup</h3>
@@ -4838,6 +4987,7 @@ function App() {
               </>)}
             </div>
           )}
+          <ScreenSaver blocked={!!currentItem && !nativeOK} />
           {(numBuf || numMsg) && (
             <div
               style={{

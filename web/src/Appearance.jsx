@@ -71,10 +71,18 @@ export default function Appearance({ sectionStyle, titleStyle, noteStyle }) {
         ))}
       </div>
 
+      <p style={label}>Screen saver</p>
+      <div style={row}>
+        {[['0', 'Off'], ['5', 'After 5 min'], ['10', 'After 10 min'], ['20', 'After 20 min'], ['30', 'After 30 min']].map(([k, n]) => (
+          <Choice key={k} on={String(a.saver) === k} onClick={() => set('saver', k)}>{n}</Choice>
+        ))}
+      </div>
+      <p style={{ ...noteStyle, marginTop: -6 }}>Dims the menus to black with a slowly moving clock when nothing is pressed. Protects OLED TVs from burn-in. Never shows while you're watching.</p>
+
       <div>
         <button
           type="button"
-          onClick={() => { const n = { theme: 'classic', accent: 'blue', text: 'white', size: '100' }; setA(n); saveAppearance(n); }}
+          onClick={() => { const n = { theme: 'classic', accent: 'blue', text: 'white', size: '100', saver: '10' }; setA(n); saveAppearance(n); }}
           style={{ background: 'none', border: 'none', color: 'var(--pt-acc, #55b2f2)', cursor: 'pointer', font: 'inherit', padding: '6px 0' }}
         >
           Back to the standard PRIMO TV look

@@ -37,10 +37,17 @@ public class PlayerActivity extends Activity {
     public static final String EXTRA_URL = "url";
     public static final String EXTRA_LIST = "channels";   // JSON [{name,url},...] for channel up/down
     public static final String EXTRA_INDEX = "index";
+    public static final String EXTRA_EPG = "epg";       // provider guide address, stream id added at the end
 
     private org.json.JSONArray channels;
     private int chIndex = -1;
-    private TextView banner;
+    private int prevIndex = -1;
+    private String epgBase;
+    private android.widget.LinearLayout banner;
+    private TextView bTitle, bNow, bNext;
+    private android.widget.ProgressBar bBar;
+    private final java.util.Map<String, org.json.JSONArray> epgCache = new java.util.HashMap<>();
+    private final java.util.Map<String, Long> epgAt = new java.util.HashMap<>();
     private View errorView;
 
     private ExoPlayer player;
@@ -58,6 +65,7 @@ public class PlayerActivity extends Activity {
             String list = getIntent().getStringExtra(EXTRA_LIST);
             if (list != null) channels = new org.json.JSONArray(list);
             chIndex = getIntent().getIntExtra(EXTRA_INDEX, -1);
+            epgBase = getIntent().getStringExtra(EXTRA_EPG);
         } catch (Exception e) {
             channels = null;
         }
@@ -70,17 +78,37 @@ public class PlayerActivity extends Activity {
         view.setShowSubtitleButton(true);
         setContentView(view);
 
-        // Channel number + name banner (top-left), shown briefly after switching
-        banner = new TextView(this);
-        banner.setTextColor(Color.WHITE);
-        banner.setTextSize(22);
-        banner.setPadding(28, 16, 28, 16);
-        banner.setBackgroundColor(Color.parseColor("#CC111316"));
+        // Channel banner (bottom): number + name, now with progress, and next. Shown briefly after switching.
+        banner = new android.widget.LinearLayout(this);
+        banner.setOrientation(android.widget.LinearLayout.VERTICAL);
+        banner.setPadding(36, 22, 36, 24);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(Color.parseColor("#E60E1124"));
+        bg.setCornerRadius(24);
+        banner.setBackground(bg);
+        bTitle = new TextView(this);
+        bTitle.setTextColor(Color.WHITE);
+        bTitle.setTextSize(24);
+        bTitle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        bNow = new TextView(this);
+        bNow.setTextColor(Color.parseColor("#E6E9F2"));
+        bNow.setTextSize(18);
+        bNow.setPadding(0, 10, 0, 6);
+        bBar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bBar.setMax(1000);
+        bNext = new TextView(this);
+        bNext.setTextColor(Color.parseColor("#A9B0C6"));
+        bNext.setTextSize(16);
+        bNext.setPadding(0, 8, 0, 0);
+        banner.addView(bTitle);
+        banner.addView(bNow);
+        banner.addView(bBar, new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 10));
+        banner.addView(bNext);
         banner.setVisibility(View.GONE);
         android.widget.FrameLayout.LayoutParams bp = new android.widget.FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.START);
-        bp.setMargins(48, 40, 0, 0);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        bp.setMargins(64, 0, 64, 48);
         ((ViewGroup) view.getParent()).addView(banner, bp);
 
         hideSystemUi();
@@ -241,17 +269,108 @@ public class PlayerActivity extends Activity {
     private void showBanner() {
         try {
             org.json.JSONObject ch = channels.getJSONObject(chIndex);
-            banner.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", ""));
+            bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", ""));
+            String id = ch.optString("id", "");
+            fillGuide(id);
             banner.setVisibility(View.VISIBLE);
             hideHandler.removeCallbacks(hideBanner);
-            hideHandler.postDelayed(hideBanner, 3000);
+            hideHandler.postDelayed(hideBanner, 5000);
+            if (!id.isEmpty() && epgBase != null) {
+                Long at = epgAt.get(id);
+                if (at == null || System.currentTimeMillis() - at > 10 * 60000) loadGuide(id);
+            }
         } catch (Exception ignored) { }
+    }
+
+    private static final java.text.SimpleDateFormat HM = new java.text.SimpleDateFormat("HH:mm", Locale.UK);
+
+    /** Now / next lines from the cached guide for this channel. */
+    private void fillGuide(String id) {
+        org.json.JSONArray L = epgCache.get(id);
+        long now = System.currentTimeMillis();
+        org.json.JSONObject cur = null, nxt = null;
+        for (int i = 0; L != null && i < L.length(); i++) {
+            org.json.JSONObject it = L.optJSONObject(i);
+            if (it == null) continue;
+            long s = it.optLong("s"), e = it.optLong("e");
+            if (s <= now && now < e) cur = it;
+            else if (s > now && (nxt == null || s < nxt.optLong("s"))) nxt = it;
+        }
+        if (cur != null) {
+            long s = cur.optLong("s"), e = cur.optLong("e");
+            bNow.setText("Now   " + HM.format(new java.util.Date(s)) + " – " + HM.format(new java.util.Date(e)) + "   " + cur.optString("t"));
+            bBar.setProgress((int) Math.max(0, Math.min(1000, (now - s) * 1000 / Math.max(1, e - s))));
+            bBar.setVisibility(View.VISIBLE);
+        } else {
+            bNow.setText(L == null && epgBase != null ? "Loading guide…" : "No guide information");
+            bBar.setVisibility(View.GONE);
+        }
+        if (nxt != null) {
+            bNext.setText("Next  " + HM.format(new java.util.Date(nxt.optLong("s"))) + "   " + nxt.optString("t"));
+            bNext.setVisibility(View.VISIBLE);
+        } else bNext.setVisibility(View.GONE);
+    }
+
+    private static String b64(String s) {
+        try {
+            String t = new String(android.util.Base64.decode(s, android.util.Base64.DEFAULT), "UTF-8");
+            return t.isEmpty() ? s : t;
+        } catch (Exception e) { return s; }
+    }
+
+    private void loadGuide(final String id) {
+        epgAt.put(id, System.currentTimeMillis());
+        new Thread(() -> {
+            try {
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(epgBase + id).openConnection();
+                c.setConnectTimeout(8000); c.setReadTimeout(10000);
+                c.setRequestProperty("User-Agent", ProviderProxy.UA);
+                java.io.InputStream in = c.getInputStream();
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                byte[] b = new byte[16384]; int k;
+                while ((k = in.read(b)) > 0) bo.write(b, 0, k);
+                in.close(); c.disconnect();
+                org.json.JSONArray src = new org.json.JSONObject(bo.toString("UTF-8")).optJSONArray("epg_listings");
+                org.json.JSONArray out = new org.json.JSONArray();
+                for (int i = 0; src != null && i < src.length(); i++) {
+                    org.json.JSONObject it = src.getJSONObject(i);
+                    org.json.JSONObject o = new org.json.JSONObject();
+                    o.put("s", it.optLong("start_timestamp") * 1000);
+                    o.put("e", it.optLong("stop_timestamp") * 1000);
+                    o.put("t", b64(it.optString("title", "")));
+                    out.put(o);
+                }
+                runOnUiThread(() -> {
+                    epgCache.put(id, out);
+                    try {
+                        if (channels != null && id.equals(channels.getJSONObject(chIndex).optString("id"))) fillGuide(id);
+                    } catch (Exception ignored) { }
+                });
+            } catch (Exception ignored) {
+                runOnUiThread(() -> { if (!epgCache.containsKey(id)) epgCache.put(id, new org.json.JSONArray()); });
+            }
+        }).start();
     }
 
     private boolean zap(int step) {
         if (channels == null || channels.length() < 2 || chIndex < 0) return false;
         int n = channels.length();
-        chIndex = ((chIndex + step) % n + n) % n;
+        return zapTo(((chIndex + step) % n + n) % n);
+    }
+
+    /** Back to the channel you were on before (like Sky's back-and-forth). */
+    private boolean previous() {
+        if (channels == null || prevIndex < 0 || prevIndex >= channels.length() || prevIndex == chIndex) {
+            Toast.makeText(this, "No previous channel yet", Toast.LENGTH_SHORT).show();
+            return true;
+        }
+        return zapTo(prevIndex);
+    }
+
+    private boolean zapTo(int index) {
+        if (channels == null || index < 0 || index >= channels.length()) return false;
+        if (index != chIndex) prevIndex = chIndex;
+        chIndex = index;
         try {
             url = channels.getJSONObject(chIndex).getString("url");
         } catch (Exception e) {
@@ -309,7 +428,15 @@ public class PlayerActivity extends Activity {
                         return true;
                     }
                     break;
+                case KeyEvent.KEYCODE_LAST_CHANNEL:
+                    if (channels != null) return previous();
+                    break;
+                case KeyEvent.KEYCODE_INFO:
+                    if (channels != null) { showBanner(); return true; }
+                    break;
                 case KeyEvent.KEYCODE_DPAD_LEFT:
+                    // Live TV can't rewind, so Left flips back to the previous channel.
+                    if (channels != null && !view.isControllerFullyVisible() && !player.isCurrentMediaItemSeekable()) return previous();
                     if (!view.isControllerFullyVisible() && player.isCurrentMediaItemSeekable()) {
                         player.seekTo(Math.max(0, player.getCurrentPosition() - 10000));
                         view.showController();
@@ -326,6 +453,12 @@ public class PlayerActivity extends Activity {
             }
         }
         return view.dispatchKeyEvent(event) || super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        Reminders.top = new java.lang.ref.WeakReference<>(this);
     }
 
     @Override

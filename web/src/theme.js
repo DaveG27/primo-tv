@@ -38,7 +38,7 @@ export const SIZES = {
 };
 
 const KEY = 'primotv_appearance';
-const DEFAULTS = { theme: 'classic', accent: 'blue', text: 'white', size: '100' };
+const DEFAULTS = { theme: 'classic', accent: 'blue', text: 'white', size: '100', saver: '10' };
 
 export function loadAppearance() {
   try { return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY)) || {}) }; }

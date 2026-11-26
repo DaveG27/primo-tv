@@ -225,6 +225,8 @@ public class MainActivity extends Activity {
             web.postDelayed(() -> Updater.check(this, false), 8000);
         }
         handleOrbitIntent(getIntent());
+        handleOwnIntent(getIntent());
+        Reminders.ensureChannel(this);
     }
 
     @Override
@@ -232,6 +234,52 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleOrbitIntent(intent);
+        handleOwnIntent(intent);
+    }
+
+    /** From a reminder notification (extra "play") or a Google TV home-row tile (primotv://play?id=...). */
+    private void handleOwnIntent(Intent intent) {
+        if (intent == null) return;
+        String url = intent.getStringExtra("play");
+        if (url != null && url.startsWith("http")) {
+            intent.removeExtra("play");
+            playerOpen = false;
+            openPlayer(url);
+            return;
+        }
+        android.net.Uri d = intent.getData();
+        if (d != null && "primotv".equals(d.getScheme()) && "play".equals(d.getHost())) {
+            String id = d.getQueryParameter("id");
+            intent.setData(null);
+            if (id != null && id.matches("[0-9A-Za-z_-]+")) {
+                String js = "window.__ptOpenChannel ? window.__ptOpenChannel('" + id + "') : (window.__ptPendingOpen = '" + id + "')";
+                web.postDelayed(() -> web.evaluateJavascript(js, null), 600);
+            }
+        }
+    }
+
+    // ---------- Voice search ----------
+    private static final int VOICE = 77;
+
+    boolean startVoice() {
+        Intent i = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Say a film, series or channel");
+        if (i.resolveActivity(getPackageManager()) == null) return false;
+        try { startActivityForResult(i, VOICE); return true; } catch (Exception e) { return false; }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != VOICE) return;
+        String text = "";
+        if (res == RESULT_OK && data != null) {
+            java.util.ArrayList<String> r = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS);
+            if (r != null && !r.isEmpty()) text = r.get(0);
+        }
+        String q = org.json.JSONObject.quote(text);
+        web.evaluateJavascript("window.__ptVoice && window.__ptVoice(" + q + ")", null);
     }
 
     /**
@@ -271,6 +319,10 @@ public class MainActivity extends Activity {
     }
 
     void openPlayer(String stream, String channelsJson, int index) {
+        openPlayer(stream, channelsJson, index, null);
+    }
+
+    void openPlayer(String stream, String channelsJson, int index, String epgBase) {
         runOnUiThread(() -> {
             stopPreview();
             playerOpen = true;
@@ -282,6 +334,7 @@ public class MainActivity extends Activity {
                 if (channelsJson != null) {
                     i.putExtra(PlayerActivity.EXTRA_LIST, channelsJson);
                     i.putExtra(PlayerActivity.EXTRA_INDEX, index);
+                    if (epgBase != null) i.putExtra(PlayerActivity.EXTRA_EPG, epgBase);
                 }
                 startActivity(i);
             } catch (Exception e) {
@@ -429,6 +482,12 @@ public class MainActivity extends Activity {
             if (url != null && !url.isEmpty()) activity.openPlayer(url, channelsJson, index);
         }
 
+        /** Same, plus the guide address so the player banner can show now and next. */
+        @JavascriptInterface
+        public void playChannelsGuide(String url, String channelsJson, int index, String epgBase) {
+            if (url != null && !url.isEmpty()) activity.openPlayer(url, channelsJson, index, epgBase);
+        }
+
         /** Small live preview at a spot on the page (CSS pixels from the top-left of the page). */
         @JavascriptInterface
         public void preview(String url, float x, float y, float w, float h) {
@@ -451,10 +510,89 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean openUrl(String url) { return activity.openVideo(url); }
 
+        /** Programme reminders (a minute before start). */
+        @JavascriptInterface
+        public void remind(String id, String at, String title, String text, String url) {
+            try { Reminders.set(activity, id, Long.parseLong(at), title, text, url); } catch (Exception ignored) { }
+        }
+
+        @JavascriptInterface
+        public void cancelRemind(String id) { Reminders.cancel(activity, id); }
+
+        @JavascriptInterface
+        public String reminders() { return Reminders.all(activity).toString(); }
+
+        /** Multiview: JSON [{name,url}] for 2 to 4 channels. */
+        @JavascriptInterface
+        public void multiview(String json) {
+            activity.runOnUiThread(() -> {
+                try {
+                    activity.stopPreview();
+                    Intent i = new Intent(activity, MultiActivity.class);
+                    i.putExtra(MultiActivity.EXTRA_LIST, json);
+                    activity.startActivity(i);
+                } catch (Exception ignored) { }
+            });
+        }
+
+        /** Google TV / Android TV home screen row of favourite channels. */
+        @JavascriptInterface
+        public boolean homeRowSupported() { return TvRow.supported(activity); }
+
+        @JavascriptInterface
+        public void setHomeRow(String json) { new Thread(() -> TvRow.update(activity, json)).start(); }
+
+        /** Voice search: true if the box has speech recognition (the answer comes back in __ptVoice). */
+        @JavascriptInterface
+        public boolean voiceSearch() {
+            final boolean[] ok = { false };
+            java.util.concurrent.CountDownLatch l = new java.util.concurrent.CountDownLatch(1);
+            activity.runOnUiThread(() -> { ok[0] = activity.startVoice(); l.countDown(); });
+            try { l.await(2, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+            return ok[0];
+        }
+
+        @JavascriptInterface
+        public boolean hasVoice() {
+            return new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).resolveActivity(activity.getPackageManager()) != null;
+        }
+
+        /** Help > Test my connection: downloads for up to 8 seconds and reports Mbps to __ptSpeed. */
+        @JavascriptInterface
+        public void speedTest() {
+            new Thread(() -> {
+                String js;
+                try {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("https://speed.cloudflare.com/__down?bytes=50000000").openConnection();
+                    c.setConnectTimeout(10000); c.setReadTimeout(10000);
+                    java.io.InputStream in = c.getInputStream();
+                    byte[] b = new byte[65536];
+                    long total = 0, t0 = System.nanoTime(), started = 0;
+                    int k;
+                    while ((k = in.read(b)) > 0) {
+                        total += k;
+                        if (started == 0 && total > 256 * 1024) { started = System.nanoTime(); total = 0; }
+                        if (started > 0 && System.nanoTime() - started > 8_000_000_000L) break;
+                        if (System.nanoTime() - t0 > 15_000_000_000L) break;
+                    }
+                    in.close(); c.disconnect();
+                    double secs = started > 0 ? (System.nanoTime() - started) / 1e9 : 0;
+                    double mbps = secs > 0.5 ? total * 8 / secs / 1e6 : 0;
+                    js = "window.__ptSpeed && window.__ptSpeed(" + String.format(java.util.Locale.US, "%.2f", mbps) + ")";
+                } catch (Exception e) {
+                    js = "window.__ptSpeed && window.__ptSpeed(0, 'The test could not run. Check the box is online.')";
+                }
+                final String run = js;
+                activity.runOnUiThread(() -> activity.runJs(run));
+            }).start();
+        }
+
         /** Settings > Check for updates. */
         @JavascriptInterface
         public void checkUpdate() { activity.runOnUiThread(() -> Updater.check(activity, true)); }
     }
+
+    void runJs(String js) { if (web != null) web.evaluateJavascript(js, null); }
 
     /** Lights up the Update button in the app's top bar. */
     void notifyUpdate(String v) {
@@ -559,6 +697,10 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: media = "ff"; break;
                 case KeyEvent.KEYCODE_MEDIA_REWIND:     media = "rw"; break;
             }
+            if (event.getKeyCode() == KeyEvent.KEYCODE_SEARCH) {
+                web.evaluateJavascript("window.__ptVoiceKey && window.__ptVoiceKey()", null);
+                return true;
+            }
             if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
                 web.evaluateJavascript("window.__ptFav && window.__ptFav()", null);
                 return true;
@@ -608,6 +750,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        Reminders.top = new java.lang.ref.WeakReference<>(this);
         if (playerOpen) {
             // Back from the native player: close the app's own player screen too.
             playerOpen = false;
