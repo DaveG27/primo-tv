@@ -84,39 +84,51 @@ export function SportView({ chans, cats, getEpg, onPlay, onCatchup, canCatch, is
         const past = e.e <= now;
         const future = e.s > now;
         const main = e.streams[0];
+        const archived = past ? e.streams.filter((ch) => canCatch(ch, e)) : [];
+        const act = () => {
+          if (future) onRemind(main, { start: e.s, end: e.e, title: e.title });
+          else if (past) { if (archived[0]) onCatchup(archived[0], e); }
+          else onPlay(main);
+        };
+        const hint = future
+          ? (isReminded(main, e.s) ? '🔔 Reminder set · OK to cancel' : 'OK to be reminded')
+          : past
+            ? (archived[0] ? `OK to watch from the start on ${archived[0].name}` : 'Finished · no catch up')
+            : `OK to watch on ${main.name}`;
+        const others = (past ? archived : future ? [] : e.streams).slice(1, 4);
         return (
-          <div key={`${e.title}|${e.s}`} style={{ ...card, display: 'flex', gap: 14, alignItems: 'center' }}>
-            <div style={{ width: 64, flexShrink: 0, textAlign: 'center' }}>
-              <div style={{ fontSize: 18, fontWeight: 800 }}>{hm(e.s)}</div>
-              {live && <div style={{ fontSize: 11, fontWeight: 800, color: '#ff5d73', marginTop: 2 }}>● LIVE</div>}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 17, fontWeight: 700 }}>{e.title}</div>
-              <div style={{ fontSize: 13, color: 'var(--pt-mut, #aab)', marginTop: 2 }}>
-                {[e.comp, e.channels.slice(0, 3).join(' · ')].filter(Boolean).join('  —  ')}
+          <div key={`${e.title}|${e.s}`} style={{ marginBottom: 8 }}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={act}
+              onKeyDown={(ev) => { if (ev.key === 'Enter') act(); }}
+              style={{ ...card, marginBottom: 0, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer', opacity: past && !archived[0] ? 0.6 : 1 }}
+            >
+              <div style={{ width: 64, flexShrink: 0, textAlign: 'center' }}>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>{hm(e.s)}</div>
+                {live && <div style={{ fontSize: 11, fontWeight: 800, color: '#ff5d73', marginTop: 2 }}>● LIVE</div>}
               </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 17, fontWeight: 700 }}>
+                  {isReminded(main, e.s) ? '🔔 ' : ''}{e.title}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--pt-mut, #aab)', marginTop: 2 }}>
+                  {[e.comp, e.channels.slice(0, 3).join(' · ')].filter(Boolean).join('  —  ')}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--pt-acc, #55b2f2)', textAlign: 'right', maxWidth: '35%' }}>{hint}</div>
             </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '45%' }}>
-              {!future &&
-                e.streams.slice(0, 3).map((ch) =>
-                  past ? (
-                    canCatch(ch, e) && (
-                      <button key={ch.stream_id} type="button" style={small} onClick={() => onCatchup(ch, e)}>
-                        ↺ {ch.name}
-                      </button>
-                    )
-                  ) : (
-                    <button key={ch.stream_id} type="button" style={small} onClick={() => onPlay(ch)}>
-                      ▶ {ch.name}
-                    </button>
-                  )
-                )}
-              {future && (
-                <button type="button" style={small} onClick={() => onRemind(main, { start: e.s, end: e.e, title: e.title })}>
-                  {isReminded(main, e.s) ? '🔔 Reminder set' : '🔔 Remind me'}
-                </button>
-              )}
-            </div>
+            {others.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', padding: '6px 0 0 92px' }}>
+                <span style={{ fontSize: 12, color: 'var(--pt-mut, #889)' }}>Also on:</span>
+                {others.map((ch) => (
+                  <button key={ch.stream_id} type="button" style={small} onClick={() => (past ? onCatchup(ch, e) : onPlay(ch))}>
+                    {past ? '↺ ' : '▶ '}{ch.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
