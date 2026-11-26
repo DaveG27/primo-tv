@@ -2379,6 +2379,20 @@ function App() {
     setTimeout(go, 120);
   };
 
+  // TV: OK on a category moves the remote onto the first channel or poster in it.
+  const focusList = () => {
+    let tries = 0;
+    const go = () => {
+      const el = document.querySelector('[data-tv-row]') || document.querySelector('[data-tv-grid] > *');
+      if (el) {
+        if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+        el.focus();
+        el.scrollIntoView({ block: 'nearest' });
+      } else if (++tries < 12) setTimeout(go, 150);
+    };
+    setTimeout(go, 200);
+  };
+
   // ---------- Reminders (stored and fired by the app, a minute before the start) ----------
   const nativeOK = typeof window !== 'undefined' && !!window.PrimoNative;
   const readRem = () => {
@@ -2784,6 +2798,7 @@ function App() {
                 onClick={() => {
                   setTvCat(c.id);
                   setTvSel(null);
+                  if (IS_TV) focusList();
                 }}
                 style={{
                   display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px',
@@ -3233,6 +3248,7 @@ function App() {
       setTvVodFav(fav);
       setCategory(id);
       setVisibleCount(PAGE);
+      if (IS_TV) focusList();
     };
     const entries = [
       { id: '', fav: false, name: `All (${total})` },
