@@ -2356,7 +2356,10 @@ function App() {
     let tries = 0;
     const go = () => {
       const main = document.querySelector('main');
+      // Screens with a category list (Live TV, Movies, Series) start on the chosen category.
       const pick =
+        document.querySelector('[data-tv-cat][data-on="1"]') ||
+        document.querySelector('[data-tv-cat]') ||
         document.querySelector('[data-tv-row][data-sel="1"]') ||
         document.querySelector('[data-tv-row]') ||
         document.querySelector('[data-tv-grid] > *') ||
