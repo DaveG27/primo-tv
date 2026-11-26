@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.primotv.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.primotv.app'
+        minSdk 22          // Fire OS 5+ (all Fire TV sticks still in use)
+        targetSdk 34
+        // Build number from GitHub Actions; the in-app updater compares it.
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int)
+        versionName rootProject.file('version.txt').text.trim()
+
+        // The app is bundled in the APK and served from this private address on the box.
+        buildConfigField 'String', 'START_URL', '"https://appassets.androidplatform.net/index.html"'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        primo {
+            storeFile file('primotv.jks')
+            storePassword System.getenv('SIGNING_PASSWORD')
+            keyAlias 'primotv'
+            keyPassword System.getenv('SIGNING_PASSWORD')
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.primo
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+    // Native video player
+    def media3 = '1.4.1'
+    implementation "androidx.media3:media3-exoplayer:$media3"
+    implementation "androidx.media3:media3-exoplayer-hls:$media3"
+    implementation "androidx.media3:media3-ui:$media3"
+    implementation "androidx.media3:media3-datasource:$media3"
+}

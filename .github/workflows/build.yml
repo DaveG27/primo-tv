@@ -1,0 +1,71 @@
+name: Build PRIMO TV
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build the app
+        working-directory: web
+        env:
+          VITE_PROVIDER_SERVER: ${{ secrets.PROVIDER_SERVER }}
+        run: |
+          if [ -z "$VITE_PROVIDER_SERVER" ]; then echo "Missing PROVIDER_SERVER secret (Settings > Secrets and variables > Actions)"; exit 1; fi
+          npm install --no-audit --no-fund
+          npx vite build
+          cp -r dist/. ../app/src/main/assets/
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Unlock signing key
+        env:
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$SIGNING_PASSWORD" ]; then echo "Missing SIGNING_PASSWORD secret (Settings > Secrets and variables > Actions)"; exit 1; fi
+          printf %s "$SIGNING_PASSWORD" | openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -in primotv.jks.enc -out app/primotv.jks -pass stdin || { echo "SIGNING_PASSWORD does not unlock primotv.jks.enc"; exit 1; }
+
+      - name: Read version
+        id: v
+        run: echo "version=$(cat version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build APK
+        env:
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: gradle assembleRelease --no-daemon
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk PRIMOTV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PRIMOTV
+          path: PRIMOTV.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: PRIMO TV ${{ steps.v.outputs.version }}
+          body: PRIMO TV ${{ steps.v.outputs.version }} (build ${{ github.run_number }})
+          files: PRIMOTV.apk
+          make_latest: true
