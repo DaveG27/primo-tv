@@ -177,6 +177,17 @@ public class PlayerActivity extends Activity {
             }
 
             @Override
+            public void onVideoSizeChanged(androidx.media3.common.VideoSize vs) {
+                // The real picture size is known now: refresh the quality shown in the banner.
+                if (banner.getVisibility() == View.VISIBLE && channels != null && chIndex >= 0) {
+                    try {
+                        org.json.JSONObject ch = channels.getJSONObject(chIndex);
+                        bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", "") + resLabel());
+                    } catch (Exception ignored) { }
+                }
+            }
+
+            @Override
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) retries = 0;
                 if (state == Player.STATE_ENDED) finish();
@@ -269,7 +280,7 @@ public class PlayerActivity extends Activity {
     private void showBanner() {
         try {
             org.json.JSONObject ch = channels.getJSONObject(chIndex);
-            bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", ""));
+            bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", "") + resLabel());
             String id = ch.optString("id", "");
             fillGuide(id);
             banner.setVisibility(View.VISIBLE);
@@ -280,6 +291,17 @@ public class PlayerActivity extends Activity {
                 if (at == null || System.currentTimeMillis() - at > 10 * 60000) loadGuide(id);
             }
         } catch (Exception ignored) { }
+    }
+
+    /** "  ·  1080p 50fps" from the stream actually playing, once it's known. */
+    private String resLabel() {
+        try {
+            androidx.media3.common.Format f = player == null ? null : player.getVideoFormat();
+            if (f == null || f.height <= 0) return "";
+            String q = f.height >= 2000 ? "4K" : f.height >= 1000 ? "FHD" : f.height >= 700 ? "HD" : "SD";
+            String fps = f.frameRate > 0 ? " " + Math.round(f.frameRate) + "fps" : "";
+            return "    [" + q + " · " + f.height + "p" + fps + "]";
+        } catch (Exception e) { return ""; }
     }
 
     private static final java.text.SimpleDateFormat HM = new java.text.SimpleDateFormat("HH:mm", Locale.UK);

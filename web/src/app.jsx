@@ -363,6 +363,23 @@ const MAX_CONTINUE = 30; // how many items "Continue" remembers
 const idOf = (type, item) => (type === 'series' ? item.series_id : item.stream_id);
 
 // Movies and episodes are tracked for "Continue"; live TV is not
+// FHD / HD / 4K / SD tag, coloured so the best qualities stand out.
+const QCOL = { '4K': '#c084fc', FHD: '#55b2f2', HD: '#3ecf8e', SD: '#9aa3b2' };
+function QualityBadge({ name }) {
+  const q = qualOf(name);
+  if (!q) return null;
+  return (
+    <span
+      style={{
+        flexShrink: 0, fontSize: 10, fontWeight: 800, letterSpacing: 0.5, padding: '1px 5px', borderRadius: 4,
+        color: '#000', background: QCOL[q] || '#9aa3b2', lineHeight: '14px',
+      }}
+    >
+      {q}
+    </span>
+  );
+}
+
 const progressKeyOf = (item) => {
   if (item.type === 'movie') return `movie:${item.stream_id}`;
   if (item.type === 'episode') return `episode:${item.id}`;
@@ -2842,8 +2859,9 @@ function App() {
                   )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {ch.name}
+                  <div style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{ch.name.replace(/\s*\b(4K|UHD|FHD|HD|SD)\b\s*$/i, '')}</span>
+                    <QualityBadge name={ch.name} />
                   </div>
                   <div
                     style={{
@@ -2905,7 +2923,10 @@ function App() {
                   <Tv size={36} color="#555" />
                 )}
               </div>
-              <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 10 }}>{sel.name}</div>
+              <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>{sel.name.replace(/\s*\b(4K|UHD|FHD|HD|SD)\b\s*$/i, '')}</span>
+                <QualityBadge name={sel.name} />
+              </div>
               {selNN.now ? (
                 <>
                   <div style={{ fontSize: 11, color: 'var(--pt-acc, #55b2f2)' }}>
