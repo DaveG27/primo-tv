@@ -56,6 +56,10 @@ public class PlayerActivity extends Activity {
 
     private ExoPlayer player;
     private PlayerView view;
+    /** Pause for live TV (null for films/series or if the provider won't allow it). */
+    private Timeshift timeshift;
+    private boolean timeshiftOff = false;
+    private TextView liveTag;
     private String url;
     private int retries = 0;
 
@@ -120,6 +124,21 @@ public class PlayerActivity extends Activity {
         bp.setMargins(64, 0, 64, 48);
         ((ViewGroup) view.getParent()).addView(banner, bp);
 
+        liveTag = new TextView(this);
+        liveTag.setTextColor(Color.WHITE);
+        liveTag.setTextSize(16);
+        liveTag.setPadding(24, 12, 24, 12);
+        android.graphics.drawable.GradientDrawable lb = new android.graphics.drawable.GradientDrawable();
+        lb.setColor(Color.parseColor("#CC0E1124"));
+        lb.setCornerRadius(20);
+        liveTag.setBackground(lb);
+        liveTag.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams lt = new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        lt.setMargins(0, 40, 48, 0);
+        ((ViewGroup) view.getParent()).addView(liveTag, lt);
+        hideHandler.post(liveTick);
+
         hideSystemUi();
         hideHandler.post(meter);
         start();
@@ -155,14 +174,50 @@ public class PlayerActivity extends Activity {
         if (lower.contains(".m3u8") || lower.contains("output=m3u8") || lower.contains("output=hls")) {
             item.setMimeType(MimeTypes.APPLICATION_M3U8);
         }
-        player.setMediaItem(item.build());
+        boolean live = url.contains("/live/") && !timeshiftOff;
+        if (live) {
+            // Live: record to the box and play from the recording, so Pause really pauses
+            String ts = url.contains(".m3u8") ? url.replace(".m3u8", ".ts") : url;
+            java.io.File dir = getExternalCacheDir() != null ? getExternalCacheDir() : getCacheDir();
+            long free = dir.getUsableSpace() - 400L * 1024 * 1024;
+            long cap = Math.max(200L * 1024 * 1024, Math.min(3L * 1024 * 1024 * 1024, free));
+            try {
+                timeshift = new Timeshift(ts, dir, cap, bytesIn);
+                timeshift.start();
+                androidx.media3.extractor.DefaultExtractorsFactory ex = new androidx.media3.extractor.DefaultExtractorsFactory()
+                        .setTsExtractorFlags(androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+                                | androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS);
+                player.setMediaSource(new androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(timeshift.factory(), ex)
+                        .createMediaSource(MediaItem.fromUri("timeshift://live")));
+            } catch (Exception e) {
+                if (timeshift != null) timeshift.release();
+                timeshift = null;
+                player.setMediaItem(item.build());
+            }
+        } else {
+            player.setMediaItem(item.build());
+        }
 
         player.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(PlaybackException error) {
+                // The provider won't serve the live channel in the recordable (.ts) form: play it the old way
+                if (timeshift != null && (timeshift.failed() || timeshift.written() == 0)) {
+                    timeshiftOff = true;
+                    stopTimeshift();
+                    player.release();
+                    start();
+                    return;
+                }
                 // Live streams drop now and then – retry a few times before giving up.
                 if (retries < 3) {
                     retries++;
+                    if (timeshift != null) { // start the recording again
+                        stopTimeshift();
+                        player.release();
+                        start();
+                        return;
+                    }
                     player.seekToDefaultPosition();
                     player.prepare();
                     return;
@@ -172,6 +227,7 @@ public class PlayerActivity extends Activity {
                 if (alt != null) {
                     url = alt;
                     retries = 0;
+                    stopTimeshift();
                     player.release();
                     start();
                     return;
@@ -206,7 +262,10 @@ public class PlayerActivity extends Activity {
             @Override
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) retries = 0;
-                if (state == Player.STATE_ENDED) finish();
+                if (state == Player.STATE_ENDED) {
+                    if (timeshift != null) { backToLive(); return; } // recording limit reached: carry on live
+                    finish();
+                }
             }
         });
 
@@ -293,6 +352,7 @@ public class PlayerActivity extends Activity {
         ((ViewGroup) view.getParent()).addView(t, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if (player != null) player.stop();
+        stopTimeshift();
     }
 
     // ---------- Channel up/down ----------
@@ -468,11 +528,48 @@ public class PlayerActivity extends Activity {
             errorView = null;
         }
         retries = 0;
+        stopTimeshift();
         if (player != null) player.release();
         start();
         showBanner();
         return true;
     }
+
+    // ---------- pause for live TV ----------
+
+    private void stopTimeshift() {
+        if (timeshift != null) {
+            timeshift.release();
+            timeshift = null;
+        }
+    }
+
+    /** Drops the recording and plays the channel live again. */
+    private void backToLive() {
+        stopTimeshift();
+        if (player != null) player.release();
+        retries = 0;
+        start();
+        Toast.makeText(this, "Back to live", Toast.LENGTH_SHORT).show();
+    }
+
+    /** Top-right label: "Paused" / "2:31 behind live · → Live". */
+    private final Runnable liveTick = new Runnable() {
+        @Override
+        public void run() {
+            if (liveTag != null) {
+                String t = "";
+                if (timeshift != null && player != null) {
+                    long behind = timeshift.secondsBehind(timeshift.lastReadPos);
+                    if (!player.getPlayWhenReady()) t = "❚❚  Paused · press OK or Play to carry on";
+                    else if (behind > 8) t = String.format(java.util.Locale.UK, "%d:%02d behind live  ·  ▶▶ Right for live", behind / 60, behind % 60);
+                }
+                liveTag.setText(t);
+                liveTag.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+            hideHandler.postDelayed(this, 1000);
+        }
+    };
 
     /** Next format to try after a stream fails, or null when there's nothing left. */
     private static String fallbackUrl(String u) {
@@ -509,6 +606,11 @@ public class PlayerActivity extends Activity {
                     return true;
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
+                    // Paused live TV: OK carries on from where you paused
+                    if (timeshift != null && !player.getPlayWhenReady()) {
+                        player.play();
+                        return true;
+                    }
                     // Live TV: OK shows what's on, the picture quality and the data being used.
                     if (!player.isCurrentMediaItemSeekable() && !view.isControllerFullyVisible()) {
                         showInfo();
@@ -535,7 +637,14 @@ public class PlayerActivity extends Activity {
                         return true;
                     }
                     break;
+                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    // Behind live after a pause: Right jumps back to live
+                    if (timeshift != null && !view.isControllerFullyVisible() && timeshift.secondsBehind(timeshift.lastReadPos) > 8) {
+                        backToLive();
+                        return true;
+                    }
+                    if (event.getKeyCode() == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) break;
                     if (!view.isControllerFullyVisible() && player.isCurrentMediaItemSeekable()) {
                         player.seekTo(player.getCurrentPosition() + 10000);
                         view.showController();
@@ -576,10 +685,12 @@ public class PlayerActivity extends Activity {
         hideHandler.removeCallbacks(hideRunnable);
         hideHandler.removeCallbacks(hideBanner);
         hideHandler.removeCallbacks(meter);
+        hideHandler.removeCallbacks(liveTick);
         if (player != null) {
             player.release();
             player = null;
         }
+        stopTimeshift();
         super.onDestroy();
     }
 
