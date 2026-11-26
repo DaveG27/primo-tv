@@ -101,6 +101,7 @@ export function SportView({ chans, cats, getEpg, onPlay, onCatchup, canCatch, is
             <div
               role="button"
               tabIndex={0}
+              data-sport-row="1"
               onClick={act}
               onKeyDown={(ev) => { if (ev.key === 'Enter') act(); }}
               style={{ ...card, marginBottom: 0, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer', opacity: past && !archived[0] ? 0.6 : 1 }}

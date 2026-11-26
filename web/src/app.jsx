@@ -2334,6 +2334,31 @@ function App() {
   }, []);
   const canUpdate = typeof window !== 'undefined' && window.PrimoNative && typeof window.PrimoNative.checkUpdate === 'function';
 
+  // ---------- TV: after picking a menu item, move the remote into that screen ----------
+  const focusContent = () => {
+    let tries = 0;
+    const go = () => {
+      const main = document.querySelector('main');
+      const pick =
+        document.querySelector('[data-tv-row][data-sel="1"]') ||
+        document.querySelector('[data-tv-row]') ||
+        document.querySelector('[data-tv-grid] > *') ||
+        document.querySelector('[data-sport-row]') ||
+        document.querySelector('[data-set-tab]') ||
+        (main &&
+          Array.from(main.querySelectorAll('[role="button"], button')).find((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && r.top < window.innerHeight;
+          }));
+      if (pick) {
+        if (!pick.hasAttribute('tabindex')) pick.setAttribute('tabindex', '0');
+        pick.focus();
+        pick.scrollIntoView({ block: 'nearest' });
+      } else if (++tries < 12) setTimeout(go, 150);
+    };
+    setTimeout(go, 120);
+  };
+
   // ---------- Reminders (stored and fired by the app, a minute before the start) ----------
   const nativeOK = typeof window !== 'undefined' && !!window.PrimoNative;
   const readRem = () => {
@@ -3856,6 +3881,7 @@ function App() {
                   setCurrentItem(null);
                   setMovieDetail(null);
                   resetFilters();
+                  if (IS_TV) focusContent();
                 }}
               >
                 <Icon size={narrow ? 22 : 28} />
