@@ -139,6 +139,8 @@
     el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }
 
+  function zoneOf(el) { return el.closest && el.closest('nav') ? 'nav' : 'page'; }
+
   function center(r) { return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
 
   function move(dir) {
@@ -150,6 +152,7 @@
     }
     var from = current.getBoundingClientRect();
     var c = center(from);
+    var fromZone = zoneOf(current);
     var best = null, bestScore = Infinity;
     list.forEach(function (el) {
       if (el === current) return;
@@ -167,6 +170,8 @@
       if (dir === 'down')  { if (r.top < from.bottom - 1) return; primary = r.top - from.bottom; cross = gapX; }
       // Tie-break on centre distance so the most aligned of several overlapping targets wins.
       var score = Math.max(0, primary) + cross * 2.5 + (dir === 'up' || dir === 'down' ? Math.abs(dx) : Math.abs(dy)) * 0.05;
+      // Up/down never jump between the side menu and the page; Left/Right do that.
+      if ((dir === 'up' || dir === 'down') && zoneOf(el) !== fromZone) return;
       if (score < bestScore) { bestScore = score; best = el; }
     });
     if (best) { setFocus(best); return true; }
