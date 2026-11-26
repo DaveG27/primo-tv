@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Play, Film, Tv, Settings, User, LogOut, Eye, EyeOff, ArrowLeft, Star, Clock, X, SkipForward,
   Lock, Unlock, Download, Upload, RefreshCw, Calendar, Copy, ExternalLink, ChevronLeft, ChevronRight,
   RotateCcw, RotateCw, Maximize, PictureInPicture2, Search, Check,
 } from 'lucide-react';
 import Hls from 'hls.js';
-import Timeline, { FollowAlert } from './Timeline.jsx';
+import Timeline, { FollowAlert, catchupItem, hasArchive } from './Timeline.jsx';
+import { processLive, loadLiveOpts, saveLiveOpts, countriesFound, groupCountries, ctyName, QUALITIES, qualOf, altsOf } from './channels.js';
+import HelpPanel from './help.jsx';
 import Appearance from './Appearance.jsx';
 import { SERVER, BrandMark, AppUpdate } from './brand.jsx';
 
@@ -536,7 +538,7 @@ function App() {
   const [error, setError] = useState('');
 
   // Data
-  const [liveChannels, setLiveChannels] = useState([]);
+  const [liveRaw, setLiveChannels] = useState([]);
   const [vodList, setVodList] = useState([]);
   const [seriesList, setSeriesList] = useState([]);
   const [seriesInfo, setSeriesInfo] = useState(null);
@@ -546,9 +548,28 @@ function App() {
   const [category, setCategory] = useState('');
   const [sortMode, setSortMode] = useState('default');
   const [visibleCount, setVisibleCount] = useState(PAGE);
-  const [liveCats, setLiveCats] = useState([]);
+  const [liveCatsRaw, setLiveCats] = useState([]);
   const [vodCats, setVodCats] = useState([]);
   const [seriesCats, setSeriesCats] = useState([]);
+  // Big-library helpers: hidden countries and one entry per channel (SD/HD/FHD/4K merged)
+  const [liveOpts, setLiveOptsState] = useState(loadLiveOpts);
+  const setLiveOpts = (patch) =>
+    setLiveOptsState((o) => {
+      const n = { ...o, ...patch };
+      saveLiveOpts(n);
+      return n;
+    });
+  const liveView = useMemo(
+    () => processLive(liveRaw, liveCatsRaw, liveOpts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [liveRaw, liveCatsRaw, liveOpts.hidcty, liveOpts.merge, liveOpts.qpref]
+  );
+  const liveChannels = liveView.list;
+  const liveCats = liveView.cats;
+  const ctyList = useMemo(() => countriesFound(liveRaw, groupCountries(liveCatsRaw)), [liveRaw, liveCatsRaw]);
+  const [setTab, setSetTab] = useState('account');
+  const [numBuf, setNumBuf] = useState('');
+  const [numMsg, setNumMsg] = useState('');
 
   // Favourites
   const [favs, setFavs] = useState(EMPTY_FAVS);
@@ -841,6 +862,7 @@ function App() {
       }
 
       setAccountInfo({ ...authData.user_info, checkedAt: Date.now() });
+      try { window.__ptServerTz = (authData.server_info && authData.server_info.timezone) || ''; } catch (e) {}
       const creds = { server: base, username: user, password: pass };
       localStorage.setItem('primotv_xtream', JSON.stringify(creds));
       setCredentials(creds);
@@ -856,28 +878,47 @@ function App() {
         setLastRefreshed(cached.savedAt);
       } else {
         try {
-          const live = (await apiCall(base, user, pass, 'get_live_streams')) || [];
-          const vod = (await apiCall(base, user, pass, 'get_vod_streams')) || [];
-          const ser = (await apiCall(base, user, pass, 'get_series')) || [];
-
           // Categories are optional: if a provider fails here, login still works
           const loadCats = (action) =>
             apiCall(base, user, pass, action)
               .then((c) => (Array.isArray(c) ? c : []))
               .catch(() => []);
-          const data = {
-            savedAt: Date.now(),
-            live,
-            vod,
-            series: ser,
-            liveCats: await loadCats('get_live_categories'),
-            vodCats: await loadCats('get_vod_categories'),
-            seriesCats: await loadCats('get_series_categories'),
-          };
-          applyLists(data);
-          lastRefreshedRef.current = data.savedAt;
-          setLastRefreshed(data.savedAt);
-          if (cacheHours > 0) cacheSet(cacheKey, data);
+          // Channels first so you can start watching straight away...
+          const [live, liveCatsNew] = await Promise.all([
+            apiCall(base, user, pass, 'get_live_streams').then((x) => x || []),
+            loadCats('get_live_categories'),
+          ]);
+          const savedAt = Date.now();
+          setLiveChannels(live);
+          setLiveCats(liveCatsNew);
+          if (cached) {
+            setVodList(cached.vod || []);
+            setSeriesList(cached.series || []);
+            setVodCats(cached.vodCats || []);
+            setSeriesCats(cached.seriesCats || []);
+          }
+          lastRefreshedRef.current = savedAt;
+          setLastRefreshed(savedAt);
+          // ...then films and series in the background
+          (async () => {
+            try {
+              const [vod, ser, vodCatsNew, seriesCatsNew] = await Promise.all([
+                apiCall(base, user, pass, 'get_vod_streams').then((x) => x || []),
+                apiCall(base, user, pass, 'get_series').then((x) => x || []),
+                loadCats('get_vod_categories'),
+                loadCats('get_series_categories'),
+              ]);
+              setVodList(vod);
+              setSeriesList(ser);
+              setVodCats(vodCatsNew);
+              setSeriesCats(seriesCatsNew);
+              if (cacheHours > 0) {
+                cacheSet(cacheKey, {
+                  savedAt, live, liveCats: liveCatsNew, vod, series: ser, vodCats: vodCatsNew, seriesCats: seriesCatsNew,
+                });
+              }
+            } catch (e) {}
+          })();
         } catch (err) {
           if (!cached) throw err;
           // The provider couldn't be reached, so fall back to the older saved copy
@@ -2273,6 +2314,57 @@ function App() {
     </div>
   );
 
+  // ---------- Open on the last channel, and number keys jump to a channel (TV) ----------
+  const playLiveRef = useRef(null);
+  const autoPlayedRef = useRef(false);
+  useEffect(() => {
+    if (!IS_TV || !liveOpts.openLast || autoPlayedRef.current || !credentials || !liveChannels.length) return;
+    autoPlayedRef.current = true;
+    const last = recents[0];
+    if (!last || currentItem || !playLiveRef.current) return;
+    const ch = liveChannels.find((c) => String(c.stream_id) === String(last.stream_id)) || last;
+    playLiveRef.current(ch, liveChannels);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credentials, liveChannels.length, recents.length]);
+
+  const jumpRef = useRef(null);
+  jumpRef.current = (n) => {
+    const ch = liveChannels.find((c) => String(c.num) === n) || liveRaw.find((c) => String(c.num) === n);
+    if (ch && playLiveRef.current) {
+      setNumMsg('');
+      playLiveRef.current(ch, liveChannels);
+    } else {
+      setNumMsg(`No channel ${n}`);
+      setTimeout(() => setNumMsg(''), 2500);
+    }
+  };
+  useEffect(() => {
+    if (!IS_TV || !credentials) return undefined;
+    let buf = '';
+    let t = null;
+    const onKey = (e) => {
+      const a = document.activeElement;
+      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+      if (!/^[0-9]$/.test(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      buf = (buf + e.key).slice(0, 5);
+      setNumBuf(buf);
+      clearTimeout(t);
+      t = setTimeout(() => {
+        const n = String(Number(buf));
+        buf = '';
+        setNumBuf('');
+        jumpRef.current(n);
+      }, 1500);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      clearTimeout(t);
+    };
+  }, [credentials]);
+
   // ========== LOGIN SCREEN ==========
   if (!credentials) {
     return (
@@ -2482,6 +2574,11 @@ function App() {
     zapListRef.current = list || zapSource();
     setCurrentItem({ ...ch, type: 'live' });
   };
+  playLiveRef.current = playLive;
+  const playCatchup = (item) => {
+    zapListRef.current = [];
+    setCurrentItem(item);
+  };
 
   const zap = (step) => {
     const list = zapListRef.current;
@@ -2556,6 +2653,7 @@ function App() {
             type="button"
             onClick={() => {
               setActiveView('settings');
+              setSetTab('channels');
               setTimeout(() => {
                 const el = document.getElementById('settings-groups');
                 if (el) el.scrollIntoView({ block: 'start' });
@@ -2712,8 +2810,34 @@ function App() {
                 </>
               )}
               <div style={{ fontSize: 11, color: 'var(--pt-mut, #667)', marginTop: 18 }}>
-                OK to watch · ☰ to add or remove favourite
+                OK to watch · ☰ to add or remove favourite · number keys jump to a channel
               </div>
+              {(() => {
+                const alts = altsOf(liveChannels, sel);
+                if (!alts) return null;
+                return (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--pt-mut, #778)', marginBottom: 6 }}>QUALITY</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {alts.map((a) => (
+                        <button
+                          key={a.stream_id}
+                          type="button"
+                          onClick={() => playLive(a, liveChannels)}
+                          style={{
+                            padding: '5px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                            background: String(a.stream_id) === String(sel.stream_id) ? 'var(--pt-acc, #55b2f2)' : 'none',
+                            color: String(a.stream_id) === String(sel.stream_id) ? '#000' : 'var(--pt-text, #ddd)',
+                            border: '1px solid var(--pt-line, #333a44)',
+                          }}
+                        >
+                          {qualOf(a.name) || 'Standard'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
               <button
                 type="button"
                 onClick={() => hideChannel(sel)}
@@ -2776,6 +2900,11 @@ function App() {
                 <div style={{ fontSize: 16, fontWeight: 'bold', margin: '2px 0' }}>
                   {sel.p ? sel.p.title : 'No programme information'}
                 </div>
+                {sel.p && sel.p.end <= Date.now() && (
+                  <div style={{ fontSize: 12, color: 'var(--pt-acc, #55b2f2)', margin: '2px 0' }}>
+                    {hasArchive(sel.ch, sel.p, Date.now()) ? '↺ Catch up: press OK to watch this from the start' : 'Already shown · catch up not available on this channel'}
+                  </div>
+                )}
                 {sel.p && sel.p.description && (
                   <div
                     style={{
@@ -2883,7 +3012,11 @@ function App() {
                         role="button"
                         tabIndex={0}
                         onFocus={() => setGridSel({ ch, p })}
-                        onClick={() => playLive(ch, list)}
+                        onClick={() =>
+                          p.end <= Date.now() && hasArchive(ch, p, Date.now())
+                            ? playCatchup(catchupItem(credentials, ch, p))
+                            : playLive(ch, list)
+                        }
                         style={{
                           position: 'absolute', left: `calc(${left}% + 1px)`, width: `calc(${width}% - 2px)`,
                           top: 2, bottom: 2, borderRadius: 3, padding: '3px 6px', boxSizing: 'border-box',
@@ -3333,6 +3466,14 @@ function App() {
                       </span>
                       {i.title}
                       {isNow ? '  (on now)' : ''}
+                      {i.end <= now && currentItem && hasArchive(currentItem, i, now) && (
+                        <button
+                          style={{ ...styles.secondaryButton, marginLeft: 10, padding: '2px 8px' }}
+                          onClick={() => playCatchup(catchupItem(credentials, currentItem, i))}
+                        >
+                          ↺ Watch
+                        </button>
+                      )}
                     </div>
                     {i.description && (
                       <div style={styles.smallText}>
@@ -3525,6 +3666,7 @@ function App() {
                   lockNow();
                 } else {
                   setActiveView('settings');
+                  setSetTab('playback');
                   setSeriesInfo(null);
                   setCurrentItem(null);
                   setMovieDetail(null);
@@ -4179,7 +4321,28 @@ function App() {
           {activeView === 'settings' && (
             <div>
               <h2>Settings</h2>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '0 0 16px' }}>
+                {[['account', 'Account'], ['channels', 'Channels'], ['appearance', 'Appearance'], ['playback', 'Playback'], ['help', 'Help']].map(([k, n]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    data-set-tab={k}
+                    onClick={() => setSetTab(k)}
+                    onFocus={() => setSetTab(k)}
+                    style={{
+                      padding: '10px 18px', borderRadius: 99, font: 'inherit', fontSize: 15, cursor: 'pointer',
+                      fontWeight: setTab === k ? 800 : 500,
+                      background: setTab === k ? 'var(--pt-acc, #55b2f2)' : 'var(--pt-card, #11223e)',
+                      color: setTab === k ? '#000' : 'var(--pt-text, #fff)',
+                      border: '1px solid var(--pt-line, #1a2c4e)',
+                    }}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
 
+              {setTab === 'account' && (<>
               {/* ACCOUNTS */}
               <div style={styles.settingsSection}>
                 <h3 style={styles.settingsTitle}>Subscription</h3>
@@ -4266,6 +4429,74 @@ function App() {
                 <p style={styles.note}>
                   Saved logins stay in this browser only. Favourites, Continue and parental
                   settings are kept separately for each account.
+                </p>
+              </div>
+
+              </>)}
+
+              {setTab === 'channels' && (<>
+              {/* COUNTRIES AND ONE ENTRY PER CHANNEL */}
+              <div style={styles.settingsSection}>
+                <h3 style={styles.settingsTitle}>Countries</h3>
+                <p style={{ ...styles.note, marginTop: 0 }}>
+                  Switch off the countries you never watch. Their channels and groups disappear everywhere,
+                  which makes the lists much shorter.
+                  {' '}{liveChannels.length.toLocaleString()} of {liveRaw.length.toLocaleString()} channels shown.
+                </p>
+                <div style={{ ...styles.actionRow, margin: '10px 0' }}>
+                  <button style={styles.actionButton} onClick={() => setLiveOpts({ hidcty: [] })}>Show all</button>
+                  <button style={styles.actionButton} onClick={() => setLiveOpts({ hidcty: ctyList.map(([k]) => k) })}>Hide all</button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {ctyList.map(([k, n]) => {
+                    const on = !liveOpts.hidcty.includes(k);
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() =>
+                          setLiveOpts({ hidcty: on ? [...liveOpts.hidcty, k] : liveOpts.hidcty.filter((x) => x !== k) })
+                        }
+                        style={{
+                          padding: '8px 12px', borderRadius: 10, font: 'inherit', fontSize: 14, cursor: 'pointer',
+                          background: on ? 'var(--pt-card, #11223e)' : 'none',
+                          color: on ? 'var(--pt-text, #fff)' : 'var(--pt-mut, #778)',
+                          border: on ? '2px solid var(--pt-acc, #55b2f2)' : '2px solid var(--pt-line, #1a2c4e)',
+                          textDecoration: on ? 'none' : 'line-through',
+                        }}
+                      >
+                        {ctyName(k)} <span style={{ opacity: 0.6 }}>{n}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={styles.settingsSection}>
+                <h3 style={styles.settingsTitle}>One entry per channel</h3>
+                <label style={styles.checkRow}>
+                  <input
+                    type="checkbox"
+                    checked={liveOpts.merge}
+                    onChange={(e) => setLiveOpts({ merge: e.target.checked })}
+                  />
+                  Merge the SD, HD, FHD and 4K copies of a channel into one row
+                </label>
+                <label style={{ ...styles.checkRow, cursor: 'default', marginTop: 8 }}>
+                  Preferred quality
+                  <select
+                    style={styles.select}
+                    value={liveOpts.qpref}
+                    onChange={(e) => setLiveOpts({ qpref: e.target.value })}
+                  >
+                    {QUALITIES.map((q) => (
+                      <option key={q} value={q}>{q === 'FHD' ? 'Full HD (best for Fire TV sticks)' : q === '4K' ? '4K (fast connection and 4K box)' : q}</option>
+                    ))}
+                  </select>
+                </label>
+                <p style={styles.note}>
+                  The merged row plays your preferred quality. On Live TV the other versions are under Quality on the side panel.
                 </p>
               </div>
 
@@ -4422,15 +4653,34 @@ function App() {
 
               </div>
 
+              </>)}
+
+              {setTab === 'account' && (<>
               {/* APP VERSION + UPDATES */}
               <AppUpdate sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
 
+              </>)}
+
+              {setTab === 'appearance' && (<>
               {/* APPEARANCE */}
               <Appearance sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} />
 
+              </>)}
+
+              {setTab === 'playback' && (<>
               {/* PLAYBACK */}
               <div style={styles.settingsSection}>
                 <h3 style={styles.settingsTitle}>Playback</h3>
+                {IS_TV && (
+                  <label style={{ ...styles.checkRow, marginBottom: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={liveOpts.openLast}
+                      onChange={(e) => setLiveOpts({ openLast: e.target.checked })}
+                    />
+                    Start PRIMO TV on the last channel I watched
+                  </label>
+                )}
                 <label
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
@@ -4523,6 +4773,13 @@ function App() {
                 </p>
               </div>
 
+              </>)}
+
+              {setTab === 'help' && (
+                <HelpPanel sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
+              )}
+
+              {setTab === 'account' && (<>
               {/* BACKUP */}
               <div style={styles.settingsSection}>
                 <h3 style={styles.settingsTitle}>Backup</h3>
@@ -4557,6 +4814,19 @@ function App() {
               >
                 Logout
               </button>
+              </>)}
+            </div>
+          )}
+          {(numBuf || numMsg) && (
+            <div
+              style={{
+                position: 'fixed', top: 18, right: 24, zIndex: 90, padding: '10px 18px', borderRadius: 12,
+                background: 'var(--pt-panel, #0a1426)', border: '2px solid var(--pt-acc, #55b2f2)',
+                color: 'var(--pt-text, #fff)', fontSize: numBuf ? 34 : 18, fontWeight: 800, letterSpacing: 2,
+                boxShadow: '0 10px 30px rgba(0,0,0,.5)',
+              }}
+            >
+              {numBuf || numMsg}
             </div>
           )}
           {credentials && (

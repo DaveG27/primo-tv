@@ -443,9 +443,44 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String version() { return BuildConfig.VERSION_NAME; }
 
+        /** Fire TV or another Android TV box? (help answers differ) */
+        @JavascriptInterface
+        public boolean isFireTV() { return "Amazon".equalsIgnoreCase(Build.MANUFACTURER); }
+
+        /** Open a help video in the YouTube app at that video. */
+        @JavascriptInterface
+        public boolean openUrl(String url) { return activity.openVideo(url); }
+
         /** Settings > Check for updates. */
         @JavascriptInterface
         public void checkUpdate() { activity.runOnUiThread(() -> Updater.check(activity, true)); }
+    }
+
+    /** Fire TV YouTube only takes a video when sent straight to its main activity; Android TV differs. */
+    boolean openVideo(String url) {
+        if (url == null) return false;
+        String id = null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:v=|youtu\\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})").matcher(url);
+        if (m.find()) id = m.group(1);
+        if (id != null) {
+            String watch = "https://www.youtube.com/watch?v=" + id;
+            int fresh = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK;
+            if (tryStart(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(watch)).setClassName("com.amazon.firetv.youtube", "dev.cobalt.app.MainActivity").addFlags(fresh))) return true;
+            if (tryStart(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(watch)).setPackage("com.amazon.firetv.youtube").addFlags(fresh))) return true;
+            if (tryStart(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(watch)).setPackage("com.amazon.firetv.youtube.tv").addFlags(fresh))) return true;
+            if (tryStart(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(watch)).setPackage("com.google.android.youtube.tv").addFlags(fresh))) return true;
+            if (tryStart(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("vnd.youtube:" + id)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))) return true;
+            url = watch;
+        }
+        return tryStart(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+
+    private boolean tryStart(Intent i) {
+        try {
+            if (i.getComponent() == null && i.getPackage() != null && i.resolveActivity(getPackageManager()) == null) return false;
+            startActivity(i);
+            return true;
+        } catch (Exception e) { return false; }
     }
 
     private void injectNav() {

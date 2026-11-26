@@ -50,8 +50,8 @@
   // Focus ring styling – big and obvious from the sofa.
   var style = document.createElement('style');
   style.textContent =
-    '.rtv-focus{outline:4px solid #E50914 !important;outline-offset:2px !important;' +
-    'box-shadow:0 0 0 6px rgba(229,9,20,.35) !important;border-radius:6px;' +
+    '.rtv-focus{outline:4px solid var(--pt-acc,#55b2f2) !important;outline-offset:2px !important;' +
+    'box-shadow:0 0 0 6px color-mix(in srgb,var(--pt-acc,#55b2f2) 35%,transparent) !important;border-radius:6px;' +
     'transform:scale(1.03);transition:transform .08s ease;position:relative;z-index:2}' +
     'html{cursor:none}';
   (document.head || document.documentElement).appendChild(style);

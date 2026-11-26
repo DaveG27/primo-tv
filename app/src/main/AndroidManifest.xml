@@ -5,6 +5,16 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Lets help videos open in the YouTube app -->
+    <queries>
+        <package android:name="com.amazon.firetv.youtube" />
+        <package android:name="com.amazon.firetv.youtube.tv" />
+        <package android:name="com.google.android.youtube.tv" />
+        <package android:name="com.google.android.youtube" />
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="vnd.youtube" /></intent>
+    </queries>
+
     <!-- TV app: no touchscreen needed, works with the Fire TV remote -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />

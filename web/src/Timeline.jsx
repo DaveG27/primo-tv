@@ -126,11 +126,20 @@ const progAt = (items, t) => {
 };
 
 // ---------- catch-up ----------
+// Catch-up start times are in the provider's own time zone (from its login reply).
 const tsFmt = (ms) => {
+  const tz = typeof window !== 'undefined' && window.__ptServerTz;
+  if (tz) {
+    try {
+      const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+      const o = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+      return `${o.year}-${o.month}-${o.day}:${o.hour}-${o.minute}`;
+    } catch (e) {}
+  }
   const d = new Date(ms + ARCHIVE_TZ_OFFSET_MIN * MIN);
   return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}:${p2(d.getUTCHours())}-${p2(d.getUTCMinutes())}`;
 };
-function catchupItem(creds, ch, p) {
+export function catchupItem(creds, ch, p) {
   const { server: srv, username: u, password: pw } = creds;
   const mins = Math.ceil((p.end - p.start) / MIN) + 2;
   const start = tsFmt(p.start);
@@ -149,7 +158,7 @@ function catchupItem(creds, ch, p) {
     ],
   };
 }
-const hasArchive = (ch, p, now) => {
+export const hasArchive = (ch, p, now) => {
   if (Number(ch.tv_archive) !== 1 || p.arch === false) return false;
   const days = Number(ch.tv_archive_duration) || 0;
   return !days || p.start >= now - days * 86400000;
