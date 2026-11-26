@@ -156,12 +156,17 @@
       var r = el.getBoundingClientRect();
       var t = center(r);
       var dx = t.x - c.x, dy = t.y - c.y;
+      // Measure from edge to edge, not centre to centre, so a narrow box sitting to the
+      // right of a row (e.g. a drop-down next to its label) isn't skipped for something further away.
+      var gapX = Math.max(0, r.left - from.right, from.left - r.right);
+      var gapY = Math.max(0, r.top - from.bottom, from.top - r.bottom);
       var primary, cross;
-      if (dir === 'left')  { if (r.right > from.left + 1) return; primary = -dx; cross = Math.abs(dy); }
-      if (dir === 'right') { if (r.left < from.right - 1) return; primary = dx;  cross = Math.abs(dy); }
-      if (dir === 'up')    { if (r.bottom > from.top + 1) return; primary = -dy; cross = Math.abs(dx); }
-      if (dir === 'down')  { if (r.top < from.bottom - 1) return; primary = dy;  cross = Math.abs(dx); }
-      var score = primary + cross * 2.5;
+      if (dir === 'left')  { if (r.right > from.left + 1) return; primary = from.left - r.right; cross = gapY; }
+      if (dir === 'right') { if (r.left < from.right - 1) return; primary = r.left - from.right; cross = gapY; }
+      if (dir === 'up')    { if (r.bottom > from.top + 1) return; primary = from.top - r.bottom; cross = gapX; }
+      if (dir === 'down')  { if (r.top < from.bottom - 1) return; primary = r.top - from.bottom; cross = gapX; }
+      // Tie-break on centre distance so the most aligned of several overlapping targets wins.
+      var score = Math.max(0, primary) + cross * 2.5 + (dir === 'up' || dir === 'down' ? Math.abs(dx) : Math.abs(dy)) * 0.05;
       if (score < bestScore) { bestScore = score; best = el; }
     });
     if (best) { setFocus(best); return true; }
