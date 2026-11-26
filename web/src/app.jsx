@@ -2976,7 +2976,7 @@ function App() {
                 </>
               )}
               <div style={{ fontSize: 11, color: 'var(--pt-mut, #667)', marginTop: 18 }}>
-                OK to watch · ☰ to add or remove favourite · number keys jump to a channel
+                OK to watch · hold OK (or ☰) for favourite · number keys jump to a channel
               </div>
               {(() => {
                 const alts = altsOf(liveChannels, sel);
@@ -3328,7 +3328,7 @@ function App() {
                   .map(card)}
               </div>
             ) : (
-              <p style={styles.note}>No favourites yet. Press ☰ on a poster to add one.</p>
+              <p style={styles.note}>No favourites yet. Hold OK (or press ☰) on a poster to add one.</p>
             )
           ) : (
             <>

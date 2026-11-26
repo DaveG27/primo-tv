@@ -61,6 +61,8 @@ public class MainActivity extends Activity {
     private String navScript;
     private long lastBackPress = 0;
     private boolean mainFrameFailed = false;
+    private KeyEvent okDown = null;
+    private boolean okHeld = false;
     private androidx.webkit.WebViewAssetLoader assetLoader;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -692,6 +694,27 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // Hold OK for about half a second = add / remove favourite (like TiviMate). A short press works as normal.
+        int kc = event.getKeyCode();
+        if ((kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER) && web != null && web.getVisibility() == View.VISIBLE) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) { okDown = event; okHeld = false; return true; }
+                if (!okHeld && event.getRepeatCount() >= 3) {
+                    okHeld = true;
+                    web.evaluateJavascript("window.__ptFav && window.__ptFav()", null);
+                }
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (okHeld) { okHeld = false; okDown = null; return true; }
+                if (okDown != null) {
+                    KeyEvent down = okDown;
+                    okDown = null;
+                    super.dispatchKeyEvent(down);
+                    return super.dispatchKeyEvent(event);
+                }
+            }
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             String media = null;
             switch (event.getKeyCode()) {

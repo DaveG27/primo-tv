@@ -248,11 +248,31 @@
     for (var depth = 0; scope && depth < 4; depth++, scope = scope.parentElement) {
       var all = scope.querySelectorAll('*');
       for (var i = 0; i < all.length; i++) {
-        if (isFav(all[i]) && visible(all[i])) { press(all[i]); return true; }
+        if (isFav(all[i]) && visible(all[i])) {
+          var lbl = (all[i].getAttribute('aria-label') || all[i].getAttribute('title') || '');
+          press(all[i]);
+          toast(/remove/i.test(lbl) ? 'Removed from favourites' : '★ Added to favourites');
+          return true;
+        }
       }
     }
     return false;
   };
+
+  var toastEl = null, toastT = null;
+  function toast(msg) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.style.cssText = 'position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:2000;' +
+        'padding:12px 22px;border-radius:99px;font:600 18px sans-serif;color:#000;' +
+        'background:var(--pt-acc,#55b2f2);box-shadow:0 10px 30px rgba(0,0,0,.5);pointer-events:none';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    toastEl.style.display = 'block';
+    clearTimeout(toastT);
+    toastT = setTimeout(function () { toastEl.style.display = 'none'; }, 1800);
+  }
 
   // Called from the Android side for the Back button. Returns true if handled here.
   window.__ptBack = function () {
