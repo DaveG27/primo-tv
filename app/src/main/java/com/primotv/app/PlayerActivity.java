@@ -44,7 +44,11 @@ public class PlayerActivity extends Activity {
     private int prevIndex = -1;
     private String epgBase;
     private android.widget.LinearLayout banner;
-    private TextView bTitle, bNow, bNext;
+    private TextView bTitle, bNow, bNext, bTech;
+    /** Bytes downloaded so far, and the measured rate (bits per second, smoothed). */
+    private final java.util.concurrent.atomic.AtomicLong bytesIn = new java.util.concurrent.atomic.AtomicLong();
+    private long lastBytes = 0, lastAt = 0;
+    private double rateBps = 0;
     private android.widget.ProgressBar bBar;
     private final java.util.Map<String, org.json.JSONArray> epgCache = new java.util.HashMap<>();
     private final java.util.Map<String, Long> epgAt = new java.util.HashMap<>();
@@ -100,10 +104,15 @@ public class PlayerActivity extends Activity {
         bNext.setTextColor(Color.parseColor("#A9B0C6"));
         bNext.setTextSize(16);
         bNext.setPadding(0, 8, 0, 0);
+        bTech = new TextView(this);
+        bTech.setTextColor(Color.parseColor("#55B2F2"));
+        bTech.setTextSize(15);
+        bTech.setPadding(0, 10, 0, 0);
         banner.addView(bTitle);
         banner.addView(bNow);
         banner.addView(bBar, new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 10));
         banner.addView(bNext);
+        banner.addView(bTech);
         banner.setVisibility(View.GONE);
         android.widget.FrameLayout.LayoutParams bp = new android.widget.FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -112,6 +121,7 @@ public class PlayerActivity extends Activity {
         ((ViewGroup) view.getParent()).addView(banner, bp);
 
         hideSystemUi();
+        hideHandler.post(meter);
         start();
         if (channels != null && chIndex >= 0) showBanner();
     }
@@ -121,7 +131,13 @@ public class PlayerActivity extends Activity {
                 .setUserAgent(ProviderProxy.UA)
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(20000);
+                .setReadTimeoutMs(20000)
+                .setTransferListener(new androidx.media3.datasource.TransferListener() {
+                    @Override public void onTransferInitializing(androidx.media3.datasource.DataSource s, androidx.media3.datasource.DataSpec d, boolean net) { }
+                    @Override public void onTransferStart(androidx.media3.datasource.DataSource s, androidx.media3.datasource.DataSpec d, boolean net) { }
+                    @Override public void onBytesTransferred(androidx.media3.datasource.DataSource s, androidx.media3.datasource.DataSpec d, boolean net, int n) { if (net) bytesIn.addAndGet(n); }
+                    @Override public void onTransferEnd(androidx.media3.datasource.DataSource s, androidx.media3.datasource.DataSpec d, boolean net) { }
+                });
 
         DefaultRenderersFactory renderers = new DefaultRenderersFactory(this)
                 .setEnableDecoderFallback(true)
@@ -182,7 +198,7 @@ public class PlayerActivity extends Activity {
                 if (banner.getVisibility() == View.VISIBLE && channels != null && chIndex >= 0) {
                     try {
                         org.json.JSONObject ch = channels.getJSONObject(chIndex);
-                        bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", "") + resLabel());
+                        bTech.setText(techLine());
                     } catch (Exception ignored) { }
                 }
             }
@@ -280,7 +296,8 @@ public class PlayerActivity extends Activity {
     private void showBanner() {
         try {
             org.json.JSONObject ch = channels.getJSONObject(chIndex);
-            bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", "") + resLabel());
+            bTitle.setText(ch.optInt("num", chIndex + 1) + "   " + ch.optString("name", ""));
+            bTech.setText(techLine());
             String id = ch.optString("id", "");
             fillGuide(id);
             banner.setVisibility(View.VISIBLE);
@@ -302,6 +319,34 @@ public class PlayerActivity extends Activity {
             String fps = f.frameRate > 0 ? " " + Math.round(f.frameRate) + "fps" : "";
             return "    [" + q + " · " + f.height + "p" + fps + "]";
         } catch (Exception e) { return ""; }
+    }
+
+    private final Runnable meter = new Runnable() {
+        @Override public void run() {
+            long now = System.currentTimeMillis(), b = bytesIn.get();
+            if (lastAt > 0 && now > lastAt) {
+                double r = (b - lastBytes) * 8000.0 / (now - lastAt);
+                rateBps = rateBps <= 0 ? r : rateBps * 0.6 + r * 0.4;
+            }
+            lastBytes = b; lastAt = now;
+            if (banner != null && banner.getVisibility() == View.VISIBLE) bTech.setText(techLine());
+            hideHandler.postDelayed(this, 1000);
+        }
+    };
+
+    /** "Full HD · 1920×1080 · 50 fps · using 6.2 Mbps" */
+    private String techLine() {
+        StringBuilder sb = new StringBuilder();
+        try {
+            androidx.media3.common.Format f = player == null ? null : player.getVideoFormat();
+            if (f != null && f.height > 0) {
+                String q = f.height >= 2000 ? "4K" : f.height >= 1000 ? "Full HD" : f.height >= 700 ? "HD" : "SD";
+                sb.append(q).append("  ·  ").append(f.width).append("×").append(f.height);
+                if (f.frameRate > 0) sb.append("  ·  ").append(Math.round(f.frameRate)).append(" fps");
+            } else sb.append("Picture quality: checking…");
+        } catch (Exception ignored) { }
+        if (rateBps > 0) sb.append(String.format(Locale.UK, "  ·  using %.1f Mbps", rateBps / 1e6));
+        return sb.toString();
     }
 
     private static final java.text.SimpleDateFormat HM = new java.text.SimpleDateFormat("HH:mm", Locale.UK);
@@ -374,6 +419,19 @@ public class PlayerActivity extends Activity {
         }).start();
     }
 
+    /** The banner, also for a single channel (e.g. from a reminder or Multiview). */
+    private void showInfo() {
+        if (channels != null && chIndex >= 0) { showBanner(); return; }
+        bTitle.setText(getIntent().getStringExtra("title") != null ? getIntent().getStringExtra("title") : "Live TV");
+        bNow.setText("");
+        bBar.setVisibility(View.GONE);
+        bNext.setVisibility(View.GONE);
+        bTech.setText(techLine());
+        banner.setVisibility(View.VISIBLE);
+        hideHandler.removeCallbacks(hideBanner);
+        hideHandler.postDelayed(hideBanner, 6000);
+    }
+
     private boolean zap(int step) {
         if (channels == null || channels.length() < 2 || chIndex < 0) return false;
         int n = channels.length();
@@ -392,6 +450,7 @@ public class PlayerActivity extends Activity {
     private boolean zapTo(int index) {
         if (channels == null || index < 0 || index >= channels.length()) return false;
         if (index != chIndex) prevIndex = chIndex;
+        rateBps = 0;
         chIndex = index;
         try {
             url = channels.getJSONObject(chIndex).getString("url");
@@ -444,6 +503,11 @@ public class PlayerActivity extends Activity {
                     return true;
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
+                    // Live TV: OK shows what's on, the picture quality and the data being used.
+                    if (!player.isCurrentMediaItemSeekable() && !view.isControllerFullyVisible()) {
+                        showInfo();
+                        return true;
+                    }
                     if (!view.isControllerFullyVisible()) {
                         player.setPlayWhenReady(!player.getPlayWhenReady());
                         view.showController();
@@ -505,6 +569,7 @@ public class PlayerActivity extends Activity {
     protected void onDestroy() {
         hideHandler.removeCallbacks(hideRunnable);
         hideHandler.removeCallbacks(hideBanner);
+        hideHandler.removeCallbacks(meter);
         if (player != null) {
             player.release();
             player = null;

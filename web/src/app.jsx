@@ -2927,8 +2927,7 @@ function App() {
                 )}
               </div>
               <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>{sel.name.replace(/\s*\b(4K|UHD|FHD|HD|SD)\b\s*$/i, '')}</span>
-                <QualityBadge name={sel.name} />
+                <span>{sel.name}</span>
               </div>
               {selNN.now ? (
                 <>
