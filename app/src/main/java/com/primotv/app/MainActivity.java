@@ -123,6 +123,8 @@ public class MainActivity extends Activity {
                     WebResourceResponse local = assetLoader.shouldInterceptRequest(req.getUrl());
                     if (local != null) return local;
                 }
+                WebResourceResponse img = ImageProxy.handle(req, APP_HOST);
+                if (img != null) return img;
                 String stream = StreamDetector.find(req.getUrl().toString());
                 if (stream != null) {
                     handleStream(stream);
@@ -157,6 +159,8 @@ public class MainActivity extends Activity {
                         WebResourceResponse local = assetLoader.shouldInterceptRequest(req.getUrl());
                         if (local != null) return local;
                     }
+                    WebResourceResponse img = ImageProxy.handle(req, APP_HOST);
+                    if (img != null) return img;
                     String stream = StreamDetector.find(req.getUrl().toString());
                     if (stream != null) {
                         handleStream(stream);

@@ -903,16 +903,22 @@ function App() {
           // ...then films and series in the background
           (async () => {
             try {
-              const [vod, ser, vodCatsNew, seriesCatsNew] = await Promise.all([
-                apiCall(base, user, pass, 'get_vod_streams').then((x) => x || []),
-                apiCall(base, user, pass, 'get_series').then((x) => x || []),
+              // Films and series load separately, so one failing doesn't leave the other empty.
+              const [vodR, serR, vodCatsNew, seriesCatsNew] = await Promise.all([
+                apiCall(base, user, pass, 'get_vod_streams').then((x) => (Array.isArray(x) ? x : null)).catch(() => null),
+                apiCall(base, user, pass, 'get_series').then((x) => (Array.isArray(x) ? x : null)).catch(() => null),
                 loadCats('get_vod_categories'),
                 loadCats('get_series_categories'),
               ]);
+              const vod = vodR || (cached && cached.vod) || [];
+              const ser = serR || (cached && cached.series) || [];
               setVodList(vod);
               setSeriesList(ser);
-              setVodCats(vodCatsNew);
-              setSeriesCats(seriesCatsNew);
+              if (vodCatsNew.length || !cached) setVodCats(vodCatsNew);
+              if (seriesCatsNew.length || !cached) setSeriesCats(seriesCatsNew);
+              if (!vodR || !serR) {
+                setRefreshMsg(!vodR ? "Films didn't load from your provider. Try Refresh." : "Series didn't load from your provider. Try Refresh.");
+              }
               if (cacheHours > 0) {
                 cacheSet(cacheKey, {
                   savedAt, live, liveCats: liveCatsNew, vod, series: ser, vodCats: vodCatsNew, seriesCats: seriesCatsNew,
