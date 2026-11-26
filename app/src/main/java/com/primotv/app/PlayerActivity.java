@@ -271,11 +271,17 @@ public class PlayerActivity extends Activity {
             }
             c = c.getCause();
         }
-        String host = Uri.parse(url).getHost();
         String type = url.contains(".m3u8") ? "m3u8" : url.contains(".ts") ? "ts" : "file";
+        // Kept for "Send a problem report" (no stream links: they contain the login).
+        try {
+            String what = channels != null && chIndex >= 0 ? channels.getJSONObject(chIndex).optString("name", "") : "";
+            getSharedPreferences("diag", MODE_PRIVATE).edit()
+                    .putString("lastError", detail + " · " + type + (what.isEmpty() ? "" : " · " + what))
+                    .putLong("lastErrorAt", System.currentTimeMillis()).apply();
+        } catch (Exception ignored) { }
 
         TextView t = new TextView(this);
-        t.setText("Couldn't play this stream\n\n" + detail + "\n\nServer: " + host + "   Type: " + type
+        t.setText("Couldn't play this stream\n\n" + detail + "\n\nType: " + type
                 + "\n\nPress Back to return");
         t.setTextColor(Color.WHITE);
         t.setTextSize(24);

@@ -20,24 +20,33 @@ const small = {
 };
 
 // ---------------------------------------------------------------- Sport today
-const SPORT_CACHE = { at: 0, key: '', list: null };
+const SPORT_TTL = 2 * 3600e3;
+const SPORT_CACHE = (() => {
+  try {
+    const c = JSON.parse(localStorage.getItem('primotv_sport') || 'null');
+    if (c && Date.now() - c.at < SPORT_TTL) return c;
+  } catch (e) {}
+  return { at: 0, key: '', list: null };
+})();
 
 export function SportView({ chans, cats, getEpg, onPlay, onCatchup, canCatch, isReminded, onRemind }) {
   const [list, setList] = useState(SPORT_CACHE.list);
   const [prog, setProg] = useState(null);
   const [day, setDay] = useState(0);
   const [sport, setSport] = useState('all');
-  const key = `${chans.length}|${cats.length}`;
+  // Channel count rounded, so small list changes don't trigger a fresh scan.
+  const key = `${Math.round(chans.length / 50)}|${cats.length}`;
 
   const load = async (force) => {
-    if (!force && SPORT_CACHE.list && SPORT_CACHE.key === key && Date.now() - SPORT_CACHE.at < 30 * 60e3) {
+    if (!force && SPORT_CACHE.list && SPORT_CACHE.key === key && Date.now() - SPORT_CACHE.at < SPORT_TTL) {
       setList(SPORT_CACHE.list);
       return;
     }
-    const groups = sportChannels(chans, cats);
+    const groups = sportChannels(chans, cats, 80);
     setProg([0, groups.length]);
     const res = await buildSport(groups, getEpg, (d, n) => setProg([d, n]));
     Object.assign(SPORT_CACHE, { at: Date.now(), key, list: res });
+    try { localStorage.setItem('primotv_sport', JSON.stringify(SPORT_CACHE)); } catch (e) {}
     setList(res);
     setProg(null);
   };
@@ -138,12 +147,12 @@ export function SportView({ chans, cats, getEpg, onPlay, onCatchup, canCatch, is
 }
 
 // ---------------------------------------------------------------- Multiview
-export function MultiviewView({ list, onRemove, onClear, onStart }) {
+export function MultiviewView({ list, max = 4, onRemove, onClear, onStart }) {
   return (
     <div>
       <h2>Multiview</h2>
       <p style={{ color: 'var(--pt-mut, #aaa)', marginTop: 0 }}>
-        Watch up to 4 channels at once. Add channels from Live TV (press Right on a channel, then “Add to Multiview”).
+        Watch up to {max} channels at once{max < 4 ? ' (your login allows ' + max + ' at the same time)' : ''}. Add channels from Live TV (press Right on a channel, then “Add to Multiview”).
         In Multiview, use the arrows to pick which screen you hear, OK to make it full screen, Back to leave.
         Works best on stronger boxes; a Fire TV stick may struggle with 4. Each screen uses one connection.
       </p>
@@ -245,7 +254,7 @@ export function SpeedTest({ sectionStyle, titleStyle, noteStyle, buttonStyle }) 
 
 // ---------------------------------------------------------------- Copy setup to another box
 const SHARE = 'https://primo-updates.vercel.app/api/share';
-const SKIP = /^primotv_(accounts|xtream)|^primotv_prog/;
+const SKIP = /^primotv_(accounts|xtream|sport)|^primotv_prog/;
 
 function collect(acct) {
   const out = {};
@@ -305,6 +314,54 @@ export function CopySetup({ credentials, sectionStyle, titleStyle, noteStyle, bu
         <input style={{ ...inputStyle, width: 180, textTransform: 'uppercase', letterSpacing: 3, margin: 0 }} maxLength={6} placeholder="Code" value={code} onChange={(e) => setCode(e.target.value)} />
         <button style={buttonStyle} onClick={use}>On the new box: copy</button>
       </div>
+      {msg && <p style={noteStyle}>{msg}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Send a problem report
+const REPORT = 'https://primo-updates.vercel.app/api/report';
+
+export function ProblemReport({ credentials, summary, getLog, sectionStyle, titleStyle, noteStyle, buttonStyle, inputStyle }) {
+  const [note, setNote] = useState('');
+  const [msg, setMsg] = useState('');
+  const send = async () => {
+    setMsg('Sending…');
+    let device = {};
+    try { device = JSON.parse((nat() && nat().deviceInfo && nat().deviceInfo()) || '{}'); } catch (e) {}
+    const body = {
+      note: note.slice(0, 1000),
+      user: credentials ? credentials.username : '',
+      device,
+      summary,
+      log: getLog(),
+      at: new Date().toISOString(),
+    };
+    try {
+      const r = await fetch(REPORT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'failed');
+      setMsg(`Sent. Reference ${j.ref}. Quote this if you contact support.`);
+      setNote('');
+    } catch (e) {
+      setMsg("Couldn't send the report. Check the box is online and try again.");
+    }
+  };
+  return (
+    <div style={sectionStyle}>
+      <h3 style={titleStyle}>Send a problem report</h3>
+      <p style={{ ...noteStyle, marginTop: 0 }}>
+        Sends your username, the box model, the app version and the last few errors so the problem can be looked into.
+        Your password is never sent.
+      </p>
+      <input
+        style={{ ...inputStyle, margin: '0 0 10px' }}
+        placeholder="What went wrong? (optional)"
+        value={note}
+        maxLength={1000}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <button style={buttonStyle} onClick={send}>Send report</button>
       {msg && <p style={noteStyle}>{msg}</p>}
     </div>
   );

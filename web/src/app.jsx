@@ -8,7 +8,8 @@ import Hls from 'hls.js';
 import Timeline, { FollowAlert, catchupItem, hasArchive } from './Timeline.jsx';
 import { processLive, loadLiveOpts, saveLiveOpts, countriesFound, groupCountries, ctyName, QUALITIES, qualOf, altsOf } from './channels.js';
 import HelpPanel from './help.jsx';
-import { SportView, MultiviewView, ScreenSaver, SpeedTest, CopySetup } from './extras.jsx';
+import { SportView, MultiviewView, ScreenSaver, SpeedTest, CopySetup, ProblemReport } from './extras.jsx';
+import { diag, diagLog } from './diag.js';
 import Appearance from './Appearance.jsx';
 import { SERVER, BrandMark, AppUpdate } from './brand.jsx';
 
@@ -2379,6 +2380,11 @@ function App() {
     setTimeout(go, 120);
   };
 
+  // Problems shown on screen go into the report log too.
+  useEffect(() => { if (error) diag(`Shown: ${error}`); }, [error]);
+  useEffect(() => { if (playbackError) diag(`Playback: ${playbackError}${currentItem ? ' · ' + currentItem.name : ''}`); }, [playbackError]);
+  useEffect(() => { if (refreshMsg) diag(`Lists: ${refreshMsg}`); }, [refreshMsg]);
+
   // TV: OK on a category moves the remote onto the first channel or poster in it.
   const focusList = () => {
     let tries = 0;
@@ -2422,10 +2428,14 @@ function App() {
     setMvList(L);
     try { localStorage.setItem('primotv_multiview', JSON.stringify(L)); } catch (e) {}
   };
+  // Multiview needs one connection per screen: hidden on 1-connection logins, capped at the limit otherwise.
+  const maxCons = Number((accountInfo && accountInfo.max_connections) || 0);
+  const mvMax = maxCons > 0 ? Math.min(4, maxCons) : 4;
+  const mvAllowed = nativeOK && maxCons !== 1;
   const toggleMv = (ch) => {
     const has = mvList.some((c) => String(c.stream_id) === String(ch.stream_id));
     if (has) saveMv(mvList.filter((c) => String(c.stream_id) !== String(ch.stream_id)));
-    else if (mvList.length < 4) saveMv([...mvList, { stream_id: ch.stream_id, name: ch.name, num: ch.num }]);
+    else if (mvList.length < mvMax) saveMv([...mvList, { stream_id: ch.stream_id, name: ch.name, num: ch.num }]);
   };
 
   // ---------- Voice search ----------
@@ -3015,7 +3025,7 @@ function App() {
                 <EyeOff size={13} style={{ verticalAlign: '-2px', marginRight: 6 }} />
                 Hide this channel
               </button>
-              {nativeOK && (
+              {mvAllowed && (
                 <button
                   type="button"
                   onClick={() => toggleMv(sel)}
@@ -3027,7 +3037,7 @@ function App() {
                   <LayoutGrid size={13} style={{ verticalAlign: '-2px', marginRight: 6 }} />
                   {mvList.some((c) => String(c.stream_id) === String(sel.stream_id))
                     ? 'Remove from Multiview'
-                    : `Add to Multiview (${mvList.length}/4)`}
+                    : `Add to Multiview (${mvList.length}/${mvMax})`}
                 </button>
               )}
             </>
@@ -3900,7 +3910,7 @@ function App() {
             { name: 'Favourites', icon: Star, view: 'favourites' },
             { name: 'Timeline', icon: Calendar, view: 'timeline' },
             { name: 'Guide', icon: Calendar, view: 'guide' },
-            ...(nativeOK ? [{ name: 'Multiview', icon: LayoutGrid, view: 'multiview' }] : []),
+            ...(mvAllowed ? [{ name: 'Multiview', icon: LayoutGrid, view: 'multiview' }] : []),
             { name: 'Settings', icon: Settings, view: 'settings' },
           ].map((item) => {
             const Icon = item.icon;
@@ -4477,12 +4487,13 @@ function App() {
 
           {activeView === 'multiview' && credentials && (
             <MultiviewView
-              list={mvList}
+              list={mvList.slice(0, mvMax)}
+              max={mvMax}
               onRemove={toggleMv}
               onClear={() => saveMv([])}
               onStart={() => {
                 try {
-                  window.PrimoNative.multiview(JSON.stringify(mvList.map((c) => ({ name: c.name, url: buildStreamUrls(credentials, { ...c, type: 'live' })[0] }))));
+                  window.PrimoNative.multiview(JSON.stringify(mvList.slice(0, mvMax).map((c) => ({ name: c.name, url: buildStreamUrls(credentials, { ...c, type: 'live' })[0] }))));
                 } catch (e) {}
               }}
             />
@@ -5013,6 +5024,28 @@ function App() {
 
               {setTab === 'help' && (
                 <SpeedTest sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
+              )}
+              {setTab === 'help' && (
+                <ProblemReport
+                  credentials={credentials}
+                  getLog={diagLog}
+                  summary={{
+                    view: activeView,
+                    channels: `${liveChannels.length} shown of ${liveRaw.length}`,
+                    films: vodList.length,
+                    series: seriesList.length,
+                    hiddenCountries: (liveOpts.hidcty || []).length,
+                    merge: liveOpts.merge,
+                    quality: liveOpts.qpref,
+                    connections: accountInfo ? `${accountInfo.active_cons ?? '?'} of ${accountInfo.max_connections ?? '?'}` : '',
+                    expires: accountInfo && accountInfo.exp_date ? new Date(Number(accountInfo.exp_date) * 1000).toISOString().slice(0, 10) : '',
+                  }}
+                  sectionStyle={styles.settingsSection}
+                  titleStyle={styles.settingsTitle}
+                  noteStyle={styles.note}
+                  buttonStyle={styles.actionButton}
+                  inputStyle={styles.input}
+                />
               )}
               {setTab === 'help' && (
                 <HelpPanel sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />

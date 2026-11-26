@@ -593,6 +593,26 @@ public class MainActivity extends Activity {
             }).start();
         }
 
+        /** For "Send a problem report": the box and the last player error. */
+        @JavascriptInterface
+        public String deviceInfo() {
+            try {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("maker", Build.MANUFACTURER);
+                o.put("model", Build.MODEL);
+                o.put("android", Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
+                o.put("app", BuildConfig.VERSION_NAME + " (build " + BuildConfig.VERSION_CODE + ")");
+                android.content.SharedPreferences d = activity.getSharedPreferences("diag", MODE_PRIVATE);
+                o.put("lastPlayerError", d.getString("lastError", ""));
+                o.put("lastPlayerErrorAt", d.getLong("lastErrorAt", 0));
+                android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+                ((android.app.ActivityManager) activity.getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(mi);
+                o.put("memoryMB", mi.totalMem / 1048576);
+                o.put("freeMemoryMB", mi.availMem / 1048576);
+                return o.toString();
+            } catch (Exception e) { return "{}"; }
+        }
+
         /** Settings > Check for updates. */
         @JavascriptInterface
         public void checkUpdate() { activity.runOnUiThread(() -> Updater.check(activity, true)); }
