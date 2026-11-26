@@ -246,9 +246,11 @@
     if (!current) return false;
     var scope = current;
     for (var depth = 0; scope && depth < 4; depth++, scope = scope.parentElement) {
-      var all = scope.querySelectorAll('*');
+      // Only real buttons: the yellow star icon on a favourite row would otherwise be "pressed"
+      // instead, which plays the channel rather than removing it.
+      var all = scope.querySelectorAll('button, [role="button"]');
       for (var i = 0; i < all.length; i++) {
-        if (isFav(all[i]) && visible(all[i])) {
+        if (all[i] !== current && isFav(all[i]) && visible(all[i])) {
           var lbl = (all[i].getAttribute('aria-label') || all[i].getAttribute('title') || '');
           press(all[i]);
           toast(/remove/i.test(lbl) ? 'Removed from favourites' : '★ Added to favourites');
