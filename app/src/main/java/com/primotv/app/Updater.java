@@ -73,6 +73,7 @@ final class Updater {
                 final String url = apk;
                 final String ver = (shown == null || shown.isEmpty()) ? "build " + latest : shown;
                 a.runOnUiThread(() -> {
+                    if (a instanceof MainActivity) ((MainActivity) a).notifyUpdate(ver);
                     if (a.isFinishing()) { busy = false; return; }
                     new AlertDialog.Builder(a)
                             .setTitle("Update available")

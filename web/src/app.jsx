@@ -2314,6 +2314,14 @@ function App() {
     </div>
   );
 
+  // ---------- Update available (the app tells us after its start-up check) ----------
+  const [updAvail, setUpdAvail] = useState('');
+  useEffect(() => {
+    window.__ptUpdate = (v) => setUpdAvail(String(v || 'new'));
+    return () => { window.__ptUpdate = null; };
+  }, []);
+  const canUpdate = typeof window !== 'undefined' && window.PrimoNative && typeof window.PrimoNative.checkUpdate === 'function';
+
   // ---------- Open on the last channel, and number keys jump to a channel (TV) ----------
   const playLiveRef = useRef(null);
   const autoPlayedRef = useRef(false);
@@ -3679,6 +3687,21 @@ function App() {
               {locked ? <Lock size={22} /> : <Unlock size={22} />}
             </button>
           )}
+          {canUpdate && (
+            <button
+              style={
+                updAvail
+                  ? { ...styles.helpButton, background: 'var(--pt-acc, #55b2f2)', color: '#000', borderRadius: 99, padding: '6px 14px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }
+                  : styles.helpButton
+              }
+              onClick={() => { try { window.PrimoNative.checkUpdate(); } catch (e) {} }}
+              title={updAvail ? `Update to ${updAvail}` : 'Check for updates'}
+              aria-label={updAvail ? `Update to ${updAvail}` : 'Check for updates'}
+            >
+              <Download size={22} />
+              {updAvail && <span>Update {updAvail}</span>}
+            </button>
+          )}
           <button style={styles.helpButton} onClick={logout} title="Logout">
             <LogOut size={22} />
           </button>
@@ -4343,6 +4366,9 @@ function App() {
               </div>
 
               {setTab === 'account' && (<>
+              {/* APP VERSION + UPDATES */}
+              <AppUpdate sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
+
               {/* ACCOUNTS */}
               <div style={styles.settingsSection}>
                 <h3 style={styles.settingsTitle}>Subscription</h3>
@@ -4655,11 +4681,6 @@ function App() {
 
               </>)}
 
-              {setTab === 'account' && (<>
-              {/* APP VERSION + UPDATES */}
-              <AppUpdate sectionStyle={styles.settingsSection} titleStyle={styles.settingsTitle} noteStyle={styles.note} buttonStyle={styles.actionButton} />
-
-              </>)}
 
               {setTab === 'appearance' && (<>
               {/* APPEARANCE */}

@@ -456,6 +456,13 @@ public class MainActivity extends Activity {
         public void checkUpdate() { activity.runOnUiThread(() -> Updater.check(activity, true)); }
     }
 
+    /** Lights up the Update button in the app's top bar. */
+    void notifyUpdate(String v) {
+        if (web == null) return;
+        String safe = v == null ? "" : v.replaceAll("[^0-9A-Za-z. ]", "");
+        web.evaluateJavascript("window.__ptUpdate && window.__ptUpdate('" + safe + "')", null);
+    }
+
     /** Fire TV YouTube only takes a video when sent straight to its main activity; Android TV differs. */
     boolean openVideo(String url) {
         if (url == null) return false;
